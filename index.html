@@ -1,0 +1,2255 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="雪山の小屋から脱出するレトロ風3D謎解きゲーム。山姥から逃げながら、峠の門を目指す。">
+<title>雪山からの脱出</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500&family=IBM+Plex+Mono:wght@400&family=DotGothic16&display=swap">
+<style>
+/* 単体で公開するための最低限のリセット */
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box}
+body{margin:0;font-size:14px}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<style>
+/* レイアウト：画面いっぱいのWebGLキャンバスに、DOMのUI（入口・HUD・カード）を重ねる。単一の夜の世界観。 */
+:root{
+  --night:#0b1020; --ink:#ece6d9; --muted:#9a9db1; --lamp:#f0b35c;
+  --line:rgba(236,230,217,.18); --panel:rgba(14,17,30,.86);
+  --f-display:"Shippori Mincho","Hiragino Mincho ProN","Yu Mincho",serif;
+  --f-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{background:var(--night);color:var(--ink);font-family:var(--f-body);overflow:hidden;padding-inline:16px}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--lamp);outline-offset:3px}
+
+.stage{position:fixed;inset:0;--found:0}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.stage canvas.dragging{cursor:grabbing}
+.vignette{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at 45% 55%, transparent 35%, rgba(5,7,15,.9) 100%);
+  opacity:calc(.95 - var(--found) * .1);transition:opacity 2.4s ease}
+
+.hud{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;gap:12px;
+  padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;font-size:12px;letter-spacing:.06em;
+  background:linear-gradient(rgba(8,10,20,.65),transparent);pointer-events:none}
+.hud > *{pointer-events:auto}
+.hud .name{font-family:var(--f-display);font-size:15px;letter-spacing:.2em;margin-right:auto}
+.dots{display:flex;gap:6px}
+.dots i{width:7px;height:7px;border-radius:50%;border:1px solid var(--muted);transition:background .6s,border-color .6s}
+.dots i.on{background:var(--lamp);border-color:var(--lamp);box-shadow:0 0 8px var(--lamp)}
+.chip{border:1px solid var(--line);background:rgba(18,23,38,.6);border-radius:999px;padding:5px 11px;cursor:pointer;font-size:11.5px;letter-spacing:.08em}
+.chip[aria-pressed="true"]{border-color:var(--lamp);color:var(--lamp)}
+.hint{position:absolute;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+  font-size:11.5px;letter-spacing:.12em;color:var(--muted);white-space:nowrap;transition:opacity .8s;pointer-events:none}
+.hint.off{opacity:0}
+
+.card{position:absolute;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);
+  width:min(calc(100% - 32px),460px);box-sizing:border-box;padding:18px 20px 16px;
+  background:var(--panel);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid var(--line);border-radius:4px;opacity:0;pointer-events:none;transition:opacity .6s ease,transform .6s ease}
+.card.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.card .meta{font-family:var(--f-mono);font-size:10.5px;color:var(--muted);letter-spacing:.12em;display:flex;justify-content:space-between}
+.card p{font-family:var(--f-display);font-size:clamp(14px,2.2vw,17px);line-height:1.95;margin:10px 0 12px;text-wrap:pretty}
+.card .row{display:flex;justify-content:flex-end}
+
+.gate{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding-inline:20px;
+  background:radial-gradient(ellipse at 50% 60%, rgba(30,36,58,.6), rgba(8,10,20,.97) 70%);
+  transition:opacity 1.8s ease, visibility 1.8s}
+.gate.gone{opacity:0;visibility:hidden}
+.gate h1{font-family:var(--f-display);font-weight:700;font-size:clamp(34px,8vw,66px);letter-spacing:.35em;margin:0 0 4px;padding-left:.35em}
+.gate .ruby{font-family:var(--f-mono);font-size:11px;letter-spacing:.4em;color:var(--muted)}
+.gate .lead{max-width:30em;margin:22px auto 26px;font-size:13.5px;line-height:1.9;color:var(--muted);text-wrap:balance}
+.gate .btns{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+.gate .primary{background:var(--lamp);color:#20160a;border:0;border-radius:2px;padding:11px 20px;cursor:pointer;letter-spacing:.12em;font-weight:500}
+.gate .ghost{background:transparent;border:1px solid var(--line);border-radius:2px;padding:11px 20px;cursor:pointer;letter-spacing:.12em}
+.gate small{display:block;margin-top:16px;font-size:11px;color:var(--muted);letter-spacing:.1em}
+.gate .err{color:var(--lamp);margin-top:14px;font-size:12px}
+
+.legend{position:absolute;right:16px;top:calc(56px + env(safe-area-inset-top,0px));width:min(310px,calc(100% - 32px));box-sizing:border-box;
+  background:rgba(14,17,30,.93);border:1px solid var(--line);border-radius:4px;padding:12px 14px;
+  font-size:11.5px;line-height:1.7;max-height:calc(100% - 140px);overflow:auto}
+.legend ol{margin:6px 0 8px;padding-left:1.3em}
+.legend code{font-family:var(--f-mono);font-size:10.5px;color:var(--lamp)}
+.legend .note{color:var(--muted);font-size:10.5px;border-top:1px solid var(--line);padding-top:8px;margin-top:4px}
+
+.back{position:absolute;left:16px;top:calc(54px + env(safe-area-inset-top,0px))}
+
+/* キーボード用：見えないボタン。フォーカス中は3D側で物が光る */
+.kbd{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+@media (max-width:520px){.hud{gap:8px;padding-inline:12px}.hud .name{font-size:13px}.chip{padding:4px 9px}}
+@media (prefers-reduced-motion:reduce){.card,.gate,.vignette{transition:none}}
+
+/* ===== レトロ据え置き機テイスト（ここから下で上書き） =====
+   低解像度で描いて拡大・ドット絵の質感・はっきりした色・窓枠つきのUI */
+:root{
+  --night:#13286b; --pixel:"DotGothic16","MS Gothic","Osaka-Mono",monospace;
+  --win-top:#2b45b0; --win-bot:#14246a; --win-edge:#f4f6ff; --win-shadow:#08104a; --gold:#ffe27a;
+}
+body{font-family:var(--pixel)}
+.stage.retro canvas{image-rendering:pixelated;image-rendering:crisp-edges}
+.vignette{background:radial-gradient(ellipse at 50% 55%, transparent 55%, rgba(6,10,40,.6) 100%);opacity:calc(.8 - var(--found) * .08)}
+.win{background:linear-gradient(var(--win-top),var(--win-bot));border:3px solid var(--win-edge);border-radius:7px;
+  box-shadow:0 0 0 3px var(--win-shadow), 4px 6px 0 3px rgba(4,8,30,.5);color:#fff}
+.hud{background:none;align-items:flex-start;flex-wrap:wrap}
+.hud .name{display:flex;align-items:center;gap:10px;font-family:var(--pixel);font-size:16px;letter-spacing:.15em;margin-right:0;padding:5px 12px}
+.hud .spacer{margin-right:auto}
+.dots{gap:5px}
+.dots i{border-radius:0;width:6px;height:6px;border:2px solid #9fb2ff;background:transparent}
+.dots i.on{background:var(--gold);border-color:#fff;box-shadow:none}
+.chip{font-family:var(--pixel);border-radius:6px;border:3px solid var(--win-edge);
+  background:linear-gradient(var(--win-top),var(--win-bot));box-shadow:0 0 0 2px var(--win-shadow);padding:5px 10px;letter-spacing:.06em;color:#fff}
+.chip[aria-pressed="true"]{color:var(--gold);border-color:var(--gold)}
+.clock{padding:3px 12px;display:flex;align-items:baseline;gap:6px}
+.clock .ap{font-size:11px;color:var(--gold)}
+.clock .t{font-size:20px;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.clock .colon{animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.hint{font-family:var(--pixel);color:#fff;text-shadow:2px 2px 0 var(--win-shadow)}
+
+.card{background:linear-gradient(var(--win-top),var(--win-bot));border:3px solid var(--win-edge);border-radius:8px;
+  box-shadow:0 0 0 3px var(--win-shadow), 4px 6px 0 3px rgba(4,8,30,.5);backdrop-filter:none;-webkit-backdrop-filter:none;
+  padding:24px 20px 14px;color:#fff;cursor:pointer}
+.card .meta{position:absolute;top:-17px;left:14px;right:14px;color:#fff;font-family:var(--pixel);font-size:12px;letter-spacing:.08em}
+.card .meta span{background:var(--win-bot);border:3px solid var(--win-edge);border-radius:6px;padding:2px 10px;box-shadow:0 0 0 2px var(--win-shadow)}
+.card .meta #cardNo{order:2}
+.card p{font-family:var(--pixel);font-size:clamp(14px,2.4vw,17px);line-height:1.8;min-height:3.6em;margin:6px 0 8px}
+.card.done p::after{content:"▼";display:inline-block;margin-left:6px;font-size:.7em;color:var(--gold);animation:blink 1s steps(1) infinite}
+
+.gate{background:radial-gradient(ellipse at 50% 55%, #2a46b4, #0f1f5c 75%)}
+.gate h1{font-family:var(--pixel);font-weight:400;text-shadow:4px 4px 0 var(--win-shadow);color:#fff}
+.gate h1{letter-spacing:.12em;padding-left:.12em;font-size:clamp(30px,7vw,60px)}   /* 7文字になったので字間をつめる */
+.gate .ruby{font-family:var(--pixel);color:var(--gold);letter-spacing:.5em}
+.gate .lead{font-family:var(--pixel);color:#dfe6ff;font-size:14px;line-height:1.9}
+.gate .primary,.gate .ghost{font-family:var(--pixel);border:3px solid var(--win-edge);border-radius:7px;
+  background:linear-gradient(var(--win-top),var(--win-bot));box-shadow:0 0 0 3px var(--win-shadow);color:#fff;font-weight:400}
+.gate .primary{color:var(--gold)}
+.gate .primary::before,.gate .ghost::before{content:"▶ ";font-size:.8em}
+.gate small{font-family:var(--pixel);color:#b9c6f5}
+
+.legend{background:linear-gradient(var(--win-top),var(--win-bot));border:3px solid var(--win-edge);border-radius:8px;
+  box-shadow:0 0 0 3px var(--win-shadow);font-family:var(--pixel);color:#fff}
+.legend code{font-family:var(--pixel);color:var(--gold)}
+.legend .note{color:#b9c6f5;border-top-color:rgba(255,255,255,.3)}
+
+/* 操作：スティック（タッチ端末）と「しらべる」ボタン */
+.joy{position:absolute;left:calc(20px + env(safe-area-inset-left,0px));bottom:calc(24px + env(safe-area-inset-bottom,0px));
+  width:120px;height:120px;border-radius:50%;touch-action:none;
+  background:radial-gradient(rgba(20,36,106,.55),rgba(20,36,106,.3));border:3px solid rgba(244,246,255,.75);box-shadow:0 0 0 3px rgba(8,16,74,.6)}
+.joy .knob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px;border-radius:50%;
+  background:linear-gradient(#f4f6ff,#b9c6f5);border:3px solid var(--win-shadow);pointer-events:none}
+.act{position:absolute;right:calc(20px + env(safe-area-inset-right,0px));bottom:calc(36px + env(safe-area-inset-bottom,0px));
+  padding:14px 20px;font-family:var(--pixel);font-size:15px;cursor:pointer;color:var(--gold);border-radius:999px;letter-spacing:.1em}
+.hint{bottom:auto;top:calc(64px + env(safe-area-inset-top,0px))}
+
+/* 山姥：予告・残り時間の札、赤く脈打つ縁、つかまった時の白い閃光 */
+.alert{position:absolute;left:50%;top:calc(104px + env(safe-area-inset-top,0px));transform:translateX(-50%);
+  max-width:calc(100% - 32px);box-sizing:border-box;padding:8px 16px;font-size:15px;text-align:center;letter-spacing:.06em}
+.alert.red{color:#ffd6d6;border-color:#ff9a9a}
+.stage.danger .vignette{background:radial-gradient(ellipse at 50% 55%, transparent 35%, rgba(150,0,30,.75) 100%);
+  opacity:1;animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+.flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity 1.2s ease}
+.flash.on{opacity:.9;transition:none}
+@media (prefers-reduced-motion:reduce){.stage.danger .vignette{animation:none}}
+
+/* 持ち物と灯籠の数 */
+.inv{padding:6px 12px;font-size:13px;letter-spacing:.04em}
+.inv b{font-weight:400;color:var(--gold)}
+.ending .stats{color:var(--gold);font-size:13px}
+/* 体力ゲージ（走ると減る） */
+.stam{width:110px;height:10px;padding:4px;box-sizing:content-box;align-self:center}
+.stam i{display:block;height:100%;width:100%;background:var(--gold);transform-origin:left center}
+.stam.tired i{background:#ff8a8a}
+.stam.boost i{background:#9ff0ff;box-shadow:0 0 8px #9ff0ff}
+/* 家に隠れている間の、山姥の声（頭の上に吹き出しで出す） */
+.voice{position:absolute;left:50%;top:40%;transform:translate(-50%,-100%);padding:8px 14px;box-sizing:border-box;
+  background:#fff8ee;color:#2a1a20;border:3px solid #2a1a20;border-radius:12px;font-size:14px;line-height:1.5;
+  max-width:min(72vw,280px);width:max-content;text-align:center;pointer-events:none;animation:wob .35s ease-in-out infinite alternate}
+.voice::after{content:"";position:absolute;left:50%;bottom:-11px;margin-left:-8px;border:8px solid transparent;border-top-color:#2a1a20;border-bottom:0}
+@keyframes wob{to{transform:translate(-50%,-100%) rotate(-2deg)}}
+@media (prefers-reduced-motion:reduce){.voice{animation:none}}
+/* アイテムを手に入れた時の表示 */
+.got{position:absolute;left:50%;top:36%;transform:translate(-50%,-50%) scale(.85);padding:12px 22px;font-size:18px;
+  color:var(--gold);letter-spacing:.06em;white-space:nowrap;max-width:calc(100% - 32px);box-sizing:border-box;
+  opacity:0;pointer-events:none;transition:opacity .25s ease, transform .25s ease}
+.got.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.got::before{content:"✦ ";color:#fff}
+@media (prefers-reduced-motion:reduce){.got{transition:none}}
+.drink{position:absolute;right:calc(20px + env(safe-area-inset-right,0px));bottom:calc(100px + env(safe-area-inset-bottom,0px));
+  padding:10px 16px;font-family:var(--pixel);font-size:13px;cursor:pointer;color:#9ff0ff;border-radius:999px;letter-spacing:.06em}
+/* 物置のダイヤル錠 */
+.dial{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:18px 20px;text-align:center;
+  width:min(calc(100% - 32px),320px);box-sizing:border-box}
+.dial p{margin:0 0 12px;font-size:14px;line-height:1.7}
+.digits{display:flex;justify-content:center;gap:14px;margin-bottom:14px}
+.digits div{display:flex;flex-direction:column;align-items:center;gap:6px}
+.digits span{font-size:30px;width:1.4em;background:#0b153f;border:3px solid var(--win-edge);border-radius:4px;font-variant-numeric:tabular-nums}
+.dial .row{display:flex;justify-content:center;gap:10px}
+
+@media (max-width:440px){.clock .ap{display:none}.clock .t{font-size:16px}.hud .name{font-size:14px}}
+</style>
+
+<main class="stage" id="stage">
+  <div class="vignette" aria-hidden="true"></div>
+
+  <header class="hud">
+    <div class="name win">雪山からの脱出</div>
+    <div class="inv win" id="inv">もちもの <b>なし</b>　灯 <b>0/4</b></div>
+    <div class="stam win" id="stam" aria-hidden="true" title="体力"><i id="stamBar"></i></div>
+    <span class="spacer"></span>
+    <div class="clock win" aria-label="現在時刻"><span class="ap" id="clockAp">PM</span><span class="t" id="clockT">--:--</span></div>
+  </header>
+
+  <button class="chip back" id="backBtn" hidden>← 部屋に戻る</button>
+
+  <nav aria-label="部屋の物" id="kbdNav"></nav>
+
+
+  <div class="joy" id="joy" hidden aria-hidden="true"><div class="knob" id="knob"></div></div>
+  <button class="act win" id="actBtn" hidden>しらべる</button>
+  <button class="drink win" id="drinkBtn" hidden>おしるこをのむ</button>
+
+  <div class="alert win" id="alert" hidden></div>
+  <div class="flash" id="flash" aria-hidden="true"></div>
+  <div class="got win" id="got" aria-hidden="true"></div>
+  <div class="voice" id="voice" hidden aria-live="polite"></div>
+
+  <p class="hint off" id="hint">ドラッグで見回す ／ 光る点のある物に触れる</p>
+
+  <div class="dial win" id="dial" hidden role="dialog" aria-label="物置のダイヤル錠">
+    <p>物置のダイヤル錠。<br>三けたの数字をそろえよう。</p>
+    <div class="digits" id="digits"></div>
+    <div class="row"><button class="chip" id="dialOk">あける</button><button class="chip" id="dialCancel">やめる</button></div>
+  </div>
+
+  <p class="kbd" id="liveText" aria-live="polite"></p>
+  <section class="card" id="card">
+    <div class="meta"><span id="cardNo">01 / 05</span><span id="cardObj">窓</span></div>
+    <p id="cardText"></p>
+    <div class="row"><button class="chip" id="cardClose">閉じる</button></div>
+  </section>
+
+  <div class="gate" id="gate">
+    <div>
+      <div class="ruby">YUKIYAMA ESCAPE</div>
+      <h1>雪山からの脱出</h1>
+      <p class="lead">吹雪の夜、道に迷った旅人は山小屋にたどり着いた。北の崖にある峠の門を開けて、この山から脱出しよう。小屋の中にはてがかりが、外には謎が待っている。ただし、ときおり山姥が現れる。</p>
+      <div class="btns">
+        <button class="primary" id="enterSound">はじめる</button>
+      </div>
+      <small>ヘッドホン推奨 ／ 山姥に追われたら、小屋に逃げこもう</small>
+      <p class="err" id="err" hidden>この環境では3D表示（WebGL）を開けませんでした。別のブラウザでお試しください。</p>
+    </div>
+  </div>
+
+  <div class="gate ending" id="ending" hidden>
+    <div>
+      <div class="ruby">ESCAPED</div>
+      <h1>下山</h1>
+      <p class="lead">門をくぐると、雪はしだいに小降りになった。坂の下に、ふもとの村の灯がちらちらと見える。</p>
+      <p class="lead stats" id="endStats"></p>
+      <div class="btns"><button class="primary" id="againBtn">もう一度あそぶ</button></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ================= 物語と謎の状態 =================
+     小屋の中の6つのてがかり（HINTS）と、外の謎の進み具合を変数で持つ */
+  const inv = {fire:false, kettle:false, key:false, honey:false, shoes:false, candy:0, oshiruko:0};       // 持ち物
+  let vendCool = 0, boostT = 0;                                // 自販機の準備中の残り秒数、おしるこの効果の残り秒数
+  let seiza = false, stillT = 0, seizaK = 0;                  // 雪だるまのとなりで正座しているか
+  let litCount = 0, sealed = true, gateOpen = false, wellThawed = false, escaped = false, shedOpen = false;
+  let iceK = 0, gateK = 0, playT = 0, yamaEscapes = 0, yamaCaught = 0;
+  let fireT = 0, stamina = 100, tired = false;               // 火種の残り秒数と、走れる体力
+  const FIRE_TIME = 75, SHED_CODE = '417';
+  const SYMS = ['月','雪','山','星'];                       // この並びが、灯籠をともす正しい順番
+  const HINTS = {
+    book:{name:'机の上の日記', text:() => '日記の最後のページに、こう書いてある。「峠の門をとざす氷は、四つの灯籠を正しい順にともせば解ける。はじめに、夜空をわたるもの。つぎに、空から降るもの。つぎに、けっして動かぬもの。さいごに、数えきれない小さな灯。」'},
+    map:{name:'壁の地図', text:() => '古い地図が貼ってある。小屋の北は高い崖で、そのまん中に「峠の門」。門の手前に「吹きだまり注意」。雪原には四つの灯籠の印、西に井戸、東に物置。……なぜか自販機の絵も描いてある。'},
+    clock:{name:'柱時計', text:() => '柱時計。針は4時17分をさしたまま止まっている。振り子の裏に「物置の番号、わすれないように」と書いた紙が貼ってある。'},
+    chair:{name:'毛布の椅子', text:() => '毛布の下に、走り書きのメモがはさまっていた。「門の鍵を、うっかり西の井戸に落としてしまった。底まで凍りついて、手が届かない。」'},
+    lamp:{name:'ランプ', text:() => {
+      const had = inv.fire; inv.fire = true; fireT = FIRE_TIME;
+      return had ? 'ランプの火を、火種壺につぎ足した。これでまたしばらくもつ。'
+                 : `ランプの火を、小さな火種壺に分けてもらった。外に出ると${FIRE_TIME}秒ほどで消えてしまいそうだ。【火種を手に入れた】`;
+    }},
+    stove:{name:'ストーブ', text:() => {
+      if(inv.kettle || wellThawed) return 'ストーブがぱちぱちと鳴っている。あたたかい。';
+      inv.kettle = true; [kettle, spout, handle].forEach(m => { m.visible = false; });
+      return 'ストーブの上で、やかんの湯がぐらぐらと沸いている。持ち上げると、やかんが「ピー」と鳴った。返事をしたのかもしれない。【湯のわいたやかんを手に入れた】';
+    }},
+    window:{name:'窓', text:() => '窓の外、雪原のあちこちに石の灯籠が立っている。灯籠の火袋には、それぞれちがう印が彫られているようだ。'}
+  };
+  const HINT_COUNT = Object.keys(HINTS).length;
+  const order = [];
+
+  /* ================= 音（Web Audioで生成） ================= */
+  const Sound = {
+    ctx:null, master:null, on:false,
+    init(){
+      const C = window.AudioContext || window.webkitAudioContext; if(!C) return;
+      const ctx = this.ctx = new C();
+      this.master = ctx.createGain(); this.master.gain.value = 0; this.master.connect(ctx.destination);
+      const len = ctx.sampleRate*2, buf = ctx.createBuffer(1,len,ctx.sampleRate), d = buf.getChannelData(0);
+      for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
+      const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true;
+      const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=450; bp.Q.value=.9;
+      const lfo = ctx.createOscillator(); lfo.frequency.value=.06;
+      const amt = ctx.createGain(); amt.gain.value=260; lfo.connect(amt).connect(bp.frequency);
+      const wg = ctx.createGain(); wg.gain.value=.16;
+      noise.connect(bp).connect(wg).connect(this.master); noise.start(); lfo.start();
+      [110,164.81,220].forEach((f,i)=>{const o=ctx.createOscillator();o.frequency.value=f;const g=ctx.createGain();g.gain.value=.035/(i+1);o.connect(g).connect(this.master);o.start();});
+    },
+    set(on){
+      this.on = on; if(on && !this.ctx) this.init(); if(!this.ctx) return;
+      if(on) this.ctx.resume();
+      const t = this.ctx.currentTime;
+      this.master.gain.cancelScheduledValues(t); this.master.gain.setTargetAtTime(on?.5:0, t, .9);
+    },
+    step(){                                   // 雪を踏む「さくっ」
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime, len = Math.floor(ctx.sampleRate*.08);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+      for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * (1 - i/len);
+      const s = ctx.createBufferSource(); s.buffer = buf;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+      const g = ctx.createGain(); g.gain.value = .12;
+      s.connect(lp).connect(g).connect(this.master); s.start(t);
+    },
+    rumble(){                                 // 山姥が来る前の地鳴り
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime, len = Math.floor(ctx.sampleRate*3);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+      for(let i=0;i<len;i++) d[i] = Math.random()*2 - 1;
+      const s = ctx.createBufferSource(); s.buffer = buf;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 110;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.9, t + 2.6); g.gain.linearRampToValueAtTime(0, t + 3);
+      s.connect(lp).connect(g).connect(this.master); s.start(t);
+    },
+    thud(v){                                  // 山姥の足音「ずしん」
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime, o = ctx.createOscillator();
+      o.frequency.setValueAtTime(75, t); o.frequency.exponentialRampToValueAtTime(38, t + .3);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(.5 * v, t); g.gain.exponentialRampToValueAtTime(.0001, t + .35);
+      o.connect(g).connect(this.master); o.start(t); o.stop(t + .4);
+    },
+    gong(){                                   // つかまった時の低い響き
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime;
+      [110, 116.5].forEach(f => {
+        const o = ctx.createOscillator(); o.frequency.value = f;
+        const g = ctx.createGain(); g.gain.setValueAtTime(.2, t); g.gain.exponentialRampToValueAtTime(.0001, t + 2.4);
+        o.connect(g).connect(this.master); o.start(t); o.stop(t + 2.5);
+      });
+    },
+    door(){                                   // 扉のきしむ「ギィ」
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime, o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(180, t); o.frequency.linearRampToValueAtTime(260, t + .25);
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + .05); g.gain.exponentialRampToValueAtTime(.0001, t + .35);
+      o.connect(lp).connect(g).connect(this.master); o.start(t); o.stop(t + .4);
+    },
+    grunt(){                                  // クマの低い「フム」
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime, o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(85, t + .35);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.18, t + .04); g.gain.exponentialRampToValueAtTime(.0001, t + .45);
+      o.connect(g).connect(this.master); o.start(t); o.stop(t + .5);
+    },
+    blip(){                                   // 文字送りの「ピッ」
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime, o = ctx.createOscillator();
+      o.type = 'square'; o.frequency.value = 740 + Math.random()*80;
+      const g = ctx.createGain(); g.gain.setValueAtTime(.02, t); g.gain.exponentialRampToValueAtTime(.0001, t + .05);
+      o.connect(g).connect(this.master); o.start(t); o.stop(t + .06);
+    },
+    poof(){                                   // 雪を蹴り上げた時の「ぼふっ」
+      if(!this.on || !this.ctx) return;
+      const ctx = this.ctx, t = ctx.currentTime, len = Math.floor(ctx.sampleRate*.6);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+      for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 2.5);
+      const s = ctx.createBufferSource(); s.buffer = buf;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(1600, t); lp.frequency.exponentialRampToValueAtTime(260, t+.5);
+      const g = ctx.createGain(); g.gain.value = .4;
+      s.connect(lp).connect(g).connect(this.master); s.start(t);
+    },
+    chime(step){
+      if(!this.on || !this.ctx) return;
+      const ctx=this.ctx, t=ctx.currentTime, notes=[523.25,587.33,659.25,783.99,880];
+      [1,2.01].forEach((mul,i)=>{
+        const o=ctx.createOscillator(); o.frequency.value=notes[step%5]*mul;
+        const g=ctx.createGain(); g.gain.setValueAtTime(0,t);
+        g.gain.linearRampToValueAtTime(i?.04:.12,t+.02); g.gain.exponentialRampToValueAtTime(.0001,t+2.8);
+        o.connect(g).connect(this.master); o.start(t); o.stop(t+3);
+      });
+    }
+  };
+
+  /* ================= three.js 基本セット ================= */
+  if(!window.THREE){ document.getElementById('err').hidden = false; return; }
+  let renderer;
+  try{ renderer = new THREE.WebGLRenderer({antialias:false}); }   // ギザギザもあえて残す
+  catch(e){ document.getElementById('err').hidden = false; return; }
+  renderer.setPixelRatio(1);
+  renderer.shadowMap.enabled = false;                 // 影は丸影で表現する
+  renderer.outputEncoding = THREE.LinearEncoding;     // 色をそのまま出す（鮮やかな昔の発色）
+  renderer.toneMapping = THREE.NoToneMapping;
+  stage.prepend(renderer.domElement);
+  const canvas = renderer.domElement;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#1b3486');
+  scene.fog = new THREE.Fog('#1b3486', 14, 42);      // 遠くの雪原は夜空の色に溶ける
+  const camera = new THREE.PerspectiveCamera(36, 1, .1, 100);
+
+  const room = new THREE.Group(); scene.add(room);
+  const mats = [];   // ワイヤーフレーム切替用に全素材を記録
+  const V3 = (x,y,z) => new THREE.Vector3(x,y,z);
+
+  function mat(color, o={}){
+    const {roughness, metalness, ...rest} = o;          // Lambertでは使わない値は捨てる
+    const m = new THREE.MeshLambertMaterial(Object.assign({color}, rest));
+    mats.push(m); return m;
+  }
+  function add(geo, m, x, y, z, parent=room, shadow=true){
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.position.set(x,y,z); mesh.castShadow = shadow; mesh.receiveShadow = true;
+    parent.add(mesh); return mesh;
+  }
+  const box = (w,h,d,m,x,y,z,p,s) => add(new THREE.BoxGeometry(w,h,d), m, x,y,z, p, s);
+  const cyl = (rt,rb,h,seg,m,x,y,z,p,s,open=false) => add(new THREE.CylinderGeometry(rt,rb,h,seg,1,open), m, x,y,z, p, s);
+
+  // 丸影：足元に半透明の楕円を置くだけの、昔ながらの影
+  const blobM = new THREE.MeshBasicMaterial({color:'#0a0f30', transparent:true, opacity:.32, depthWrite:false});
+  function blob(x, z, r, parent=room, sx=1){
+    const b = new THREE.Mesh(new THREE.CircleGeometry(r, 10), blobM);
+    b.rotation.x = -Math.PI/2; b.position.set(x, .015, z); b.scale.x = sx;
+    parent.add(b); return b;
+  }
+
+  /* 16〜32px四方の小さな絵をcanvasに1ドットずつ描き、ぼかさず（NearestFilter）貼る。レトロな質感の要 */
+  const PIXEL_TEX = [];   // 画質の切り替えで、ドットのまま拡大するか、なめらかに補間するかを変える
+  function pixelTex(size, draw, rx=1, ry=1){
+    const c = document.createElement('canvas'); c.width = c.height = size;
+    draw(c.getContext('2d'), size);
+    const t = new THREE.CanvasTexture(c); PIXEL_TEX.push(t);
+    t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry);
+    return t;
+  }
+  const px = (g,x,y,c) => { g.fillStyle = c; g.fillRect(x,y,1,1); };
+  let tseed = 3;
+  const trnd = () => (tseed = (tseed * 16807) % 2147483647) / 2147483647;
+  function planks(g, s){
+    for(let r=0;r<4;r++){
+      g.fillStyle = r%2 ? '#b98352' : '#a87444'; g.fillRect(0, r*8, s, 8);
+      g.fillStyle = '#cf9a63'; g.fillRect(0, r*8, s, 1);
+      g.fillStyle = '#6e4626'; g.fillRect(0, r*8+7, s, 1); g.fillRect((r*11+5)%s, r*8, 1, 7);
+    }
+    for(let i=0;i<14;i++) px(g, trnd()*s|0, trnd()*s|0, '#8f5f36');
+  }
+  function logs(g, s){
+    for(let r=0;r<4;r++){
+      const y = r*8;
+      g.fillStyle = '#8a5a34'; g.fillRect(0, y, s, 8);
+      g.fillStyle = '#a8703f'; g.fillRect(0, y+1, s, 4);
+      g.fillStyle = '#c48a52'; g.fillRect(0, y+1, s, 1);
+      g.fillStyle = '#5a3920'; g.fillRect(0, y+7, s, 1);
+    }
+    for(let i=0;i<10;i++) px(g, trnd()*s|0, trnd()*s|0, '#6d4628');
+  }
+  function snowDither(g, s){
+    g.fillStyle = '#e4ecff'; g.fillRect(0,0,s,s);
+    for(let y=0;y<s;y++) for(let x=0;x<s;x++){
+      const r = trnd();
+      if(r < .12 && (x+y)%2 === 0) px(g, x, y, '#b5c6f2');
+      else if(r > .96) px(g, x, y, '#ffffff');
+    }
+  }
+  function needles(g, s){
+    for(let y=0;y<s;y++) for(let x=0;x<s;x++){
+      const r = trnd();
+      px(g, x, y, r < .45 ? '#2e7048' : r < .8 ? '#245a3a' : r < .93 ? '#3f8a5a' : '#f0f4ff');
+    }
+  }
+  function rugPat(g, s){
+    g.fillStyle = '#c4404a'; g.fillRect(0,0,s,s);
+    g.fillStyle = '#8e2a35'; g.fillRect(2,2,s-4,1); g.fillRect(2,s-3,s-4,1); g.fillRect(2,2,1,s-4); g.fillRect(s-3,2,1,s-4);
+    for(let i=0;i<s;i+=4){ px(g,i,0,'#f2c14e'); px(g,i+2,s-1,'#f2c14e'); px(g,0,i+2,'#f2c14e'); px(g,s-1,i,'#f2c14e'); }
+    g.fillStyle = '#f2c14e'; g.fillRect(s/2-2, s/2-2, 4, 4);
+  }
+
+  /* ================= 部屋の骨格 ================= */
+  const floorTex = pixelTex(32, planks, 4, 3);
+  box(8,.2,6, mat('#ffffff',{map:floorTex}), 0,-.1,0);
+  const wallM = mat('#ffffff',{map:pixelTex(32, logs, 3, 3), transparent:true});
+  // 奥の壁：窓の穴（x 1〜2.8, y 1.6〜3.2）を残して4枚で組む
+  box(5,4.5,.2, wallM, -1.5,2.25,-3.1);
+  box(1.2,4.5,.2, wallM, 3.4,2.25,-3.1);
+  box(1.8,1.6,.2, wallM, 1.9,.8,-3.1);
+  box(1.8,1.3,.2, wallM, 1.9,3.85,-3.1);
+  box(.2,4.5,6.2, wallM, -4.1,2.25,0);                       // 左の壁
+  const trim = mat('#5a3920');
+  box(8,.12,.06, trim, 0,.06,-2.98); box(.06,.12,6, trim, -3.98,.06,0);  // 巾木
+
+  /* ================= 一軒家にする：手前と右の壁・扉・屋根 =================
+     手前と右の壁は shell、屋根は roofG という別のグループにしておき、
+     旅人が家の中にいる時だけ、屋根を外して手前と右の壁を半透明にする（中が見えるように） */
+  const shell = new THREE.Group(); scene.add(shell);
+  const roofG = new THREE.Group(); scene.add(roofG);
+  const shellM = mat('#ffffff',{map:pixelTex(32, logs, 3, 3), transparent:true});
+  const DOOR = {x0:1.5, x1:2.8, h:2.3, z:3.1};
+  const dMid = (DOOR.x0 + DOOR.x1) / 2;
+  box(.2,4.5,6.4, shellM, 4.1,2.25,0, shell);                                            // 右の壁
+  box(DOOR.x0+4.2, 4.5,.2, shellM, (DOOR.x0-4.2)/2, 2.25, DOOR.z, shell);                 // 手前の壁（扉の左）
+  box(4.2-DOOR.x1, 4.5,.2, shellM, (DOOR.x1+4.2)/2, 2.25, DOOR.z, shell);                // 手前の壁（扉の右）
+  box(DOOR.x1-DOOR.x0, 4.5-DOOR.h,.2, shellM, dMid, (4.5+DOOR.h)/2, DOOR.z, shell);      // 扉の上
+  const doorFrameM = mat('#5a3920',{transparent:true});
+  box(.12, DOOR.h+.1, .3, doorFrameM, DOOR.x0-.06, (DOOR.h+.1)/2, DOOR.z, shell);
+  box(.12, DOOR.h+.1, .3, doorFrameM, DOOR.x1+.06, (DOOR.h+.1)/2, DOOR.z, shell);
+  box(DOOR.x1-DOOR.x0+.24, .12, .3, doorFrameM, dMid, DOOR.h+.06, DOOR.z, shell);
+  // 扉：左端の蝶番を回転の中心にして、旅人が近づくと外へ開く
+  const doorM = mat('#ffffff',{map:pixelTex(32, planks, 1, 2), transparent:true});
+  const doorPivot = new THREE.Group(); doorPivot.position.set(DOOR.x0, 0, DOOR.z + .06); shell.add(doorPivot);
+  const dw = DOOR.x1 - DOOR.x0 - .04;
+  box(dw, DOOR.h - .02, .08, doorM, dw/2, (DOOR.h-.02)/2, 0, doorPivot);
+  add(new THREE.SphereGeometry(.05, 6, 4), mat('#f2c14e',{transparent:true}), dw - .15, 1.1, .07, doorPivot, false);
+  // 玄関マットと軒先のランタン
+  box(1.4,.03,.8, mat('#c4404a'), dMid, -.045, DOOR.z+.75, shell, false);
+  box(.2,.3,.2, mat('#3d4252'), DOOR.x1+.4, 2.45, DOOR.z+.18, shell, false);
+  const lanternCore = new THREE.Mesh(new THREE.BoxGeometry(.13,.2,.13), new THREE.MeshBasicMaterial({color:'#ffd28a'}));
+  lanternCore.position.set(DOOR.x1+.4, 2.45, DOOR.z+.18); shell.add(lanternCore);
+  const porchLight = new THREE.PointLight('#ffb867', .9, 6, 2);
+  porchLight.position.set(DOOR.x1+.4, 2.3, DOOR.z+.7); scene.add(porchLight);
+
+  // 屋根：赤い切妻屋根に雪を積もらせる。両端は三角の妻壁
+  const roofM = mat('#a8443a'), snowRoofM = mat('#f4f7ff');
+  const roofAng = Math.atan2(2.05, 3.6), roofL = Math.hypot(2.05, 3.6);
+  [1, -1].forEach(s => {
+    const g = new THREE.Group(); g.position.set(0, 5.39, 1.8*s); g.rotation.x = roofAng * s; roofG.add(g);
+    box(9.2, .22, roofL + .1, roofM, 0, 0, 0, g, false);
+    box(9.0, .12, roofL - .1, snowRoofM, 0, .16, 0, g, false);
+  });
+  box(9.2, .2, .34, snowRoofM, 0, 6.42, 0, roofG, false);                                   // 棟
+  const gShape = new THREE.Shape();
+  gShape.moveTo(-3.2, 4.5); gShape.lineTo(3.2, 4.5); gShape.lineTo(0, 6.35); gShape.closePath();
+  const gableM = mat('#ffffff',{map:pixelTex(32, logs, 1, 1), side:THREE.DoubleSide});
+  [-4.1, 4.1].forEach(x => {
+    const m = new THREE.Mesh(new THREE.ShapeGeometry(gShape), gableM);
+    m.rotation.y = Math.PI/2; m.position.x = x; roofG.add(m);
+  });
+  cyl(.12, .12, 2.5, 8, mat('#3d4252'), 3.35, 5.65, -2.45, roofG, false);                    // 屋根から出た煙突
+  box(.36, .1, .36, mat('#2c303c'), 3.35, 6.92, -2.45, roofG, false);
+
+  /* ================= 外の世界：雪原・木立・山 ================= */
+  const outside = new THREE.Group(); scene.add(outside);
+
+  // 起伏の高さ。小屋のまわりは平らにし、離れるほどうねらせる
+  function fieldH(x, z){
+    const dx = Math.max(Math.abs(x) - 4.3, 0), dz = Math.max(Math.abs(z) - 3.3, 0);
+    const near = THREE.MathUtils.smoothstep(Math.hypot(dx, dz), .2, 5);
+    return (Math.sin(x*.35)*.35 + Math.sin(z*.5 + x*.2)*.3 + Math.sin(x*1.3 + z*.9)*.07 + .2) * near;
+  }
+  const FIELD_Z = -8;
+  const fieldGeo = new THREE.PlaneGeometry(90, 90, 120, 120);
+  fieldGeo.rotateX(-Math.PI/2);
+  const fp = fieldGeo.attributes.position;
+  for(let i=0;i<fp.count;i++) fp.setY(i, fieldH(fp.getX(i), fp.getZ(i) + FIELD_Z));
+  fieldGeo.computeVertexNormals();
+  const field = add(fieldGeo, mat('#ffffff',{map:pixelTex(32, snowDither, 45, 45)}), 0,-.06,FIELD_Z, outside, false);
+
+  // 木立（毎回同じ配置になるよう、決まった種から乱数を作る）
+  // 謎の置き場所（木を生やさない場所）
+  const LANTERN_POS = [[-11,-9],[12,-8],[-8,-19],[9,-18]];   // 月・雪・山・星
+  const WELL_POS = [-9, 3];
+  const GATE_Z = -27;                                        // 北の崖と峠の門の位置
+  const SHED = [9, 7], VEND = [-14, -3], SNOWMAN0 = [5, -7];   // 物置・自販機・雪だるま
+  const RESERVED = [...LANTERN_POS, WELL_POS, [7.2, .6], SHED, VEND, SNOWMAN0];
+  const TREES = [];   // 当たり判定用 {x, z, r}
+  let seed = 11;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const trunkM = mat('#6b4426'), needleM = mat('#ffffff',{map:pixelTex(16, needles)}), capM = mat('#f4f7ff');
+  const coneGeo = new THREE.ConeGeometry(1, 1, 6), trunkGeo = new THREE.CylinderGeometry(.08, .1, 1, 6);
+  for(let i=0;i<90;i++){
+    const x = -30 + rnd()*60, z = -42 + rnd()*68;
+    const dx = Math.max(Math.abs(x) - 4.2, 0), dz = Math.max(Math.abs(z) - 3.2, 0);
+    if(Math.hypot(dx, dz) < 6) continue;                    // 小屋の近くには置かない
+    if(Math.abs(x - 1.9) < 3 && z < -3 && z > -13) continue; // 窓の正面は開けておく
+    if(RESERVED.some(([rx, rz]) => Math.hypot(x - rx, z - rz) < 3)) continue;   // 灯籠・井戸・クマのまわり
+    if(Math.abs(x) < 4 && z < -18) continue;                // 門へ続く道
+    const t = new THREE.Group();
+    const sc = .8 + rnd()*1.5;
+    t.position.set(x, fieldH(x, z) - .06, z); t.scale.setScalar(sc); t.rotation.y = rnd()*6;
+    TREES.push({x, z, r:.4*sc});
+    add(trunkGeo, trunkM, 0,.3,0, t, false).scale.y = .6;
+    [[.9,1.1,.9],[.7,.95,1.5],[.45,.75,2.05]].forEach(([r,h,y]) => add(coneGeo, needleM, 0,y,0, t, false).scale.set(r,h,r));
+    add(coneGeo, capM, 0,2.35,0, t, false).scale.set(.24,.32,.24);
+    blob(0, 0, .95, t).position.y = .04;
+    outside.add(t);
+  }
+
+  // 遠景の山（霧の影響を受けない影絵）
+  const mShape = new THREE.Shape();
+  mShape.moveTo(-10,-1); mShape.lineTo(-4,3.2); mShape.lineTo(-1,1.6); mShape.lineTo(2.5,4.2); mShape.lineTo(6,1.8); mShape.lineTo(12,3); mShape.lineTo(12,-1);
+  const mountains = new THREE.Mesh(new THREE.ShapeGeometry(mShape), new THREE.MeshBasicMaterial({color:'#122563', fog:false}));
+  mountains.position.set(2,-1,-44); mountains.scale.set(4.2,2.6,1); scene.add(mountains);
+
+  // 北の崖：岩の箱を左右に10個ずつ並べて壁にする。まん中に峠の門の隙間を空ける
+  function rockPat(g, s){
+    g.fillStyle = '#5c637d'; g.fillRect(0,0,s,s);
+    for(let i=0;i<40;i++) px(g, trnd()*s|0, trnd()*s|0, trnd() < .5 ? '#4a5068' : '#6f7794');
+    for(let i=0;i<6;i++) px(g, trnd()*s|0, trnd()*s|0, '#e8eeff');
+  }
+  const rockM = mat('#ffffff',{map:pixelTex(16, rockPat, 2, 3)}), cliffSnow = mat('#f4f7ff');
+  let cs = 5; const crnd = () => (cs = (cs * 16807) % 2147483647) / 2147483647;
+  [-1, 1].forEach(side => {
+    for(let i=0;i<10;i++){
+      const w = 3.21, xc = side * (1.96 + w*i + w/2);
+      const h = 5.5 + crnd()*4, d = 3.2 + crnd()*.8, zc = GATE_Z - .3 - d/2;
+      box(w + .1, h, d, rockM, xc, h/2 - .6, zc, outside, false);
+      box(w + .2, .35, d + .1, cliffSnow, xc, h - .45, zc, outside, false);
+    }
+  });
+
+  /* ラグと棚（飾り） */
+  const rug = cyl(1.7,1.7,.02,12, mat('#ffffff',{map:pixelTex(16, rugPat)}), .3,.01,.5); rug.scale.z = .7; rug.castShadow = false;
+  box(1.7,.06,.32, mat('#8a5a34'), -1.6,2.8,-2.86);
+  [['#5d7088',.32,-2.2],['#7a6a4f',.22,-1.85],['#4f6a5c',.38,-1.45],['#6f5242',.18,-1.05]].forEach(([c,h,x]) =>
+    cyl(.09,.09,h,10, mat(c), x, 2.83+h/2, -2.86));
+
+  /* ================= 触れられる物 ================= */
+  const hots = [];
+  const sparkM = new THREE.MeshBasicMaterial({color:'#ffd08a', transparent:true, opacity:.9});
+  function hot(key, focus, sparkPos, parent=room, name, reach=0){
+    const g = new THREE.Group();
+    g.userData = {key, focus, center:focus.target, name: name || HINTS[key].name, reach};
+    parent.add(g); hots.push(g);
+    const s = new THREE.Mesh(new THREE.SphereGeometry(.045, 8, 6), sparkM.clone());
+    s.position.copy(sparkPos); g.add(s); g.userData.spark = s;
+    return g;
+  }
+
+  // 机
+  const wood = mat('#9a6a3e'), woodDark = mat('#7a5230');
+  blob(-3.35, -.6, 1.25, room, .55);
+  box(1.2,.08,2.4, wood, -3.35,1.5,-.6);
+  [[-3.85,-1.7],[-2.85,-1.7],[-3.85,.5],[-2.85,.5]].forEach(([x,z]) => box(.08,1.46,.08, woodDark, x,.73,z));
+  box(.9,.22,2.1, woodDark, -3.4,1.34,-.6);
+
+  // ランプ
+  const lampG = hot('lamp', {target:V3(-3.3,1.95,-1.2), r:4.2}, V3(-3.0,2.6,-1.2));
+  cyl(.18,.22,.08,12, mat('#3c3a3a'), -3.35,1.58,-1.25, lampG);
+  cyl(.025,.025,.62,6, mat('#4a4746'), -3.35,1.92,-1.25, lampG);
+  const shade = cyl(.12,.34,.32,10, mat('#e7a24c',{side:THREE.DoubleSide, emissive:'#c9772a', emissiveIntensity:.55}), -3.35,2.32,-1.25, lampG, false, true);
+  shade.castShadow = false;
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.07,10,8), new THREE.MeshBasicMaterial({color:'#ffe2ad'}));
+  bulb.position.set(-3.35,2.22,-1.25); lampG.add(bulb);
+  const lampLight = new THREE.PointLight('#ffb867', 1, 11, 2);
+  lampLight.position.set(-3.3,2.12,-1.2); lampLight.castShadow = true;
+  lampLight.shadow.mapSize.set(512,512); lampLight.shadow.bias = -.004; lampLight.shadow.radius = 4;
+  scene.add(lampLight);
+
+  // 本
+  const bookG = hot('book', {target:V3(-3.2,1.6,.15), r:3.2}, V3(-3.0,1.85,.25));
+  const book = box(.52,.06,.38, mat('#c0392b'), -3.2,1.575,.15, bookG); book.rotation.y = .35;
+  const pages = box(.48,.04,.34, mat('#d9cfbd'), -3.2,1.625,.15, bookG); pages.rotation.y = .35;
+  const ticket = box(.07,.012,.22, mat('#c9a24f'), -3.08,1.65,.02, bookG); ticket.rotation.y = .35;
+  box(.4,.09,.3, mat('#3f6fb5'), -3.4,1.585,.55, bookG);
+  box(.36,.08,.27, mat('#d9a441'), -3.4,1.67,.55, bookG);
+
+  // 窓
+  const winG = hot('window', {target:V3(1.9,2.3,-3), r:4.6}, V3(2.6,3.1,-2.9));
+  const frameM = mat('#7a5536');
+  box(2.0,.12,.32, frameM, 1.9,3.26,-3.1, winG);
+  box(.12,1.72,.32, frameM, .94,2.4,-3.1, winG);
+  box(.12,1.72,.32, frameM, 2.86,2.4,-3.1, winG);
+  box(2.2,.1,.5, mat('#6a564a'), 1.9,1.55,-2.98, winG);
+  box(.06,1.6,.08, frameM, 1.9,2.4,-3.1, winG, false);
+  box(1.8,.06,.08, frameM, 1.9,2.4,-3.1, winG, false);
+  box(1.9,.08,.26, mat('#dde7f4'), 1.9,1.64,-3.2, winG);   // 外側の桟に積もった雪
+
+  // ストーブ
+  const stoveG = hot('stove', {target:V3(3.15,1.0,-2.1), r:4.2}, V3(3.5,1.7,-1.9));
+  const iron = mat('#3d4252');
+  blob(3.2, -2.2, .75, room, 1.1);
+  box(.9,.86,.8, iron, 3.2,.57,-2.2, stoveG);
+  box(1,.06,.9, iron, 3.2,1.03,-2.2, stoveG);
+  [[2.82,-2.52],[3.58,-2.52],[2.82,-1.88],[3.58,-1.88]].forEach(([x,z]) => box(.08,.14,.08, iron, x,.07,z, stoveG));
+  box(.5,.3,.02, mat('#ef8a3c',{emissive:'#ff7a26', emissiveIntensity:1.4}), 3.2,.57,-1.79, stoveG, false);
+  cyl(.1,.1,3.4,10, iron, 3.35,2.76,-2.45, stoveG);
+  const kettleM = mat('#b9c3d6');
+  const kettle = add(new THREE.SphereGeometry(.2,14,10), kettleM, 3.1,1.2,-2.1, stoveG); kettle.scale.y = .75;
+  const spout = cyl(.025,.04,.22,6, kettleM, 3.3,1.25,-2.1, stoveG); spout.rotation.z = -.9;
+  const handle = add(new THREE.TorusGeometry(.14,.018,6,14,Math.PI), kettleM, 3.1,1.3,-2.1, stoveG);
+  const stoveLight = new THREE.PointLight('#ff8a3a', .7, 4.5, 2);
+  stoveLight.position.set(3.2,.6,-1.5); scene.add(stoveLight);
+
+  // 毛布の椅子
+  const chairG = hot('chair', {target:V3(.6,1.0,.7), r:4.2}, V3(.6,2.25,.5));
+  const chair = new THREE.Group(); chair.position.set(.6,0,.7); chair.rotation.y = .5; chairG.add(chair);
+  const cw = mat('#a06a3c'), cwd = mat('#7a4f2c');
+  blob(.6, .7, .7, room);
+  box(.9,.08,.9, cw, 0,.9,0, chair);
+  [[-.38,-.38],[.38,-.38],[-.38,.38],[.38,.38]].forEach(([x,z]) => box(.07,.86,.07, cwd, x,.43,z, chair));
+  box(.07,1.05,.07, cw, -.38,1.45,-.41, chair); box(.07,1.05,.07, cw, .38,1.45,-.41, chair);
+  box(.9,.28,.06, cw, 0,1.8,-.41, chair);
+  const blanket = mat('#d2454c');
+  box(.82,.04,1.0, blanket, 0,.96,-.02, chair);
+  const drape = box(.82,.62,.04, blanket, 0,.66,.5, chair); drape.rotation.x = .12;
+  const back = box(.82,.7,.04, blanket, 0,1.38,-.36, chair); back.rotation.x = -.08;
+  box(.48,.12,.34, mat('#c9b79c'), .06,1.04,.08, chair);
+
+  /* ================= 謎解き：小屋の中のてがかり（壁の地図） ================= */
+  function drawMap(g, s){
+    g.fillStyle = '#e9dcb8'; g.fillRect(0,0,s,s);
+    g.fillStyle = '#b89f6e'; g.fillRect(0,0,s,2); g.fillRect(0,s-2,s,2); g.fillRect(0,0,2,s); g.fillRect(s-2,0,2,s);
+    const M = (x, z) => [Math.round((x+16)/32*(s-12)) + 6, Math.round((z+30)/36*(s-12)) + 6];
+    for(let i=0;i<60;i++) px(g, 3 + (trnd()*(s-6))|0, 12 + (trnd()*(s-16))|0, '#9bb59a');   // 木立
+    g.fillStyle = '#6b5a48';
+    for(let x=2;x<s-2;x++) g.fillRect(x, 2, 1, 7 + ((x*7)%3));                            // 北の崖
+    const [gx, gy] = M(0, GATE_Z); g.fillStyle = '#c4404a'; g.fillRect(gx-2, gy-2, 5, 4); // 門
+    const [hx, hy] = M(0, 0);
+    for(let y=gy+3; y<hy-3; y+=3) px(g, gx, y, '#8a7a5a');                                // 小道
+    g.fillStyle = '#a8443a'; g.fillRect(hx-3, hy-3, 7, 2);
+    g.fillStyle = '#8a5a34'; g.fillRect(hx-2, hy-1, 5, 3);                                // 小屋
+    LANTERN_POS.forEach(([x, z]) => { const [a, b] = M(x, z); g.fillStyle = '#e07b1f'; g.fillRect(a-1, b-1, 3, 3); px(g, a, b, '#fff3c4'); });
+    const [wx, wy] = M(WELL_POS[0], WELL_POS[1]); g.fillStyle = '#3f6fb5'; g.fillRect(wx-1, wy-1, 3, 3); px(g, wx, wy, '#cfe8ff');
+    const [sx, sy2] = M(SHED[0], SHED[1]); g.fillStyle = '#7a4f2c'; g.fillRect(sx-2, sy2-1, 4, 3);   // 物置
+    const [vx, vy2] = M(VEND[0], VEND[1]); g.fillStyle = '#d23c3c'; g.fillRect(vx-1, vy2-2, 2, 3);   // なぜか自販機
+    const dy = M(0, GATE_Z + 4.6)[1]; g.fillStyle = '#ffffff';
+    for(let x=6; x<s-6; x+=2) g.fillRect(x, dy, 1, 2);                                             // 吹きだまり
+  }
+  const mapG = hot('map', {target:V3(-3.55,1.6,1.9), r:3.4}, V3(-3.85,3.35,1.9));
+  box(.03,1.66,1.66, mat('#5a3920'), -3.985,2.4,1.9, mapG, false);
+  const mapMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.5,1.5), mat('#ffffff',{map:pixelTex(64, drawMap)}));
+  mapMesh.position.set(-3.96, 2.4, 1.9); mapMesh.rotation.y = Math.PI/2; mapG.add(mapMesh);
+
+  // 柱時計：4時17分で止まっている（物置の番号）
+  function drawClock(g, s){
+    g.fillStyle = '#f2ead6'; g.fillRect(0,0,s,s);
+    for(let k=0;k<12;k++){ const a = k*Math.PI/6; px(g, Math.round(7.5 + Math.cos(a)*6.5), Math.round(7.5 + Math.sin(a)*6.5), '#3a2a1a'); }
+    const hand = (ang, len, c) => { for(let r=0; r<=len; r+=.5) px(g, Math.round(7.5 + Math.sin(ang)*r), Math.round(7.5 - Math.cos(ang)*r), c); };
+    hand((4 + 17/60)/12*Math.PI*2, 3.5, '#1a1a1a');     // 時針
+    hand(17/60*Math.PI*2, 5.5, '#c4404a');              // 分針
+  }
+  const clockG = hot('clock', {target:V3(0, 1.6, -2.5), r:3.4}, V3(.45, 3.4, -2.75));
+  box(.62,1.5,.22, mat('#7a4f2c'), 0, 2.35, -2.9, clockG, false);
+  const clockFace = new THREE.Mesh(new THREE.PlaneGeometry(.48,.48), mat('#ffffff',{map:pixelTex(16, drawClock)}));
+  clockFace.position.set(0, 2.75, -2.785); clockG.add(clockFace);
+  box(.04,.5,.02, mat('#d9a441'), 0, 2.05, -2.77, clockG, false);    // 止まった振り子
+  box(.16,.16,.03, mat('#d9a441'), 0, 1.8, -2.77, clockG, false);
+
+  /* ================= 謎解き：小屋の外 =================
+     石の灯籠×4、古い井戸、立て札、北の崖の峠の門。props にまとめ、近づいて「しらべる」 */
+  const props = new THREE.Group(); scene.add(props);
+  const lanternGlowTex = glowTexture();
+  // 火袋に彫る印（16px四方）
+  function symBase(g, s){
+    g.fillStyle = '#565c75'; g.fillRect(0,0,s,s);
+    g.fillStyle = '#3e4358'; g.fillRect(0,0,s,1); g.fillRect(0,s-1,s,1); g.fillRect(0,0,1,s); g.fillRect(s-1,0,1,s);
+  }
+  const INK = '#f2f4ff';
+  const SYM_DRAW = [
+    (g, s) => { symBase(g, s);                                             // 月：円から少しずらした円を引いた三日月
+      for(let y=0;y<s;y++) for(let x=0;x<s;x++)
+        if(Math.hypot(x-7.5, y-7.5) < 5.3 && Math.hypot(x-9.8, y-6) >= 4.4) px(g, x, y, INK); },
+    (g, s) => { symBase(g, s);                                             // 雪：60度ずつの3本線
+      for(let k=0;k<3;k++){ const a = k*Math.PI/3;
+        for(let r=-5;r<=5;r++) px(g, Math.round(7.5 + Math.cos(a)*r), Math.round(7.5 + Math.sin(a)*r), INK); } },
+    (g, s) => { symBase(g, s);                                             // 山：三角形に雪の頂
+      for(let y=3;y<13;y++){ const half = (y-3)*.68;
+        for(let x=0;x<s;x++) if(Math.abs(x-7.5) <= half) px(g, x, y, y < 6 ? INK : '#a9b0c8'); } },
+    (g, s) => { symBase(g, s);                                             // 星：五芒星
+      g.fillStyle = INK; g.beginPath();
+      for(let k=0;k<10;k++){ const r = k%2 ? 2.6 : 6.4, a = -Math.PI/2 + k*Math.PI/5; g.lineTo(8 + Math.cos(a)*r, 8 + Math.sin(a)*r); }
+      g.closePath(); g.fill(); }
+  ];
+  const lanterns = SYMS.map((s, i) => {
+    const [x, z] = LANTERN_POS[i], y = fieldH(x, z) - .06;
+    const g = hot('lantern' + i, {target:V3(x, y+1, z), r:4}, V3(x, y+2.9, z), props, `石の灯籠（${s}）`, .45);
+    g.userData.spark.scale.setScalar(2.5);
+    const L = new THREE.Group(); L.position.set(x, y, z); g.add(L);
+    const sm = mat('#8f96ad'), sd = mat('#6d7390');           // 灯籠ごとに素材を分け、近づいた1基だけ光らせる
+    box(.8,.25,.8, sd, 0,.12,0, L, false);
+    cyl(.16,.2,1.0,6, sm, 0,.75,0, L, false);
+    box(.75,.12,.75, sd, 0,1.3,0, L, false);
+    const fm = mat('#ffffff',{map:pixelTex(16, SYM_DRAW[i])});
+    box(.5,.5,.5, fm, 0,1.61,0, L, false);
+    cyl(0,.62,.42,4, sm, 0,2.07,0, L, false).rotation.y = Math.PI/4;
+    cyl(0,.32,.22,4, mat('#f4f7ff'), 0,2.24,0, L, false).rotation.y = Math.PI/4;
+    blob(0, 0, .6, L).position.y = .03;
+    const glowS = new THREE.Sprite(new THREE.SpriteMaterial({map:lanternGlowTex, color:'#ffc070', transparent:true, opacity:0,
+      depthWrite:false, blending:THREE.AdditiveBlending}));
+    glowS.position.set(0, 1.61, 0); glowS.scale.setScalar(2.6); L.add(glowS);
+    TREES.push({x, z, r:.5});
+    return {g, fm, glowS, lit:false, a:0};
+  });
+
+  // 古い井戸
+  const [WX, WZ] = WELL_POS, wy = fieldH(WX, WZ) - .06;
+  const wellG = hot('well', {target:V3(WX, wy+.8, WZ), r:4}, V3(WX, wy+2.5, WZ), props, '古い井戸', .7);
+  wellG.userData.spark.scale.setScalar(2.5);
+  const wPost = mat('#6b4426');
+  cyl(.85,.92,.8,8, mat('#8f96ad'), WX, wy+.4, WZ, wellG, false);
+  cyl(.7,.7,.04,8, new THREE.MeshBasicMaterial({color:'#0d1a3a'}), WX, wy+.62, WZ, wellG, false);
+  const wellIce = cyl(.72,.72,.08,8, mat('#cfe8ff',{emissive:'#1d3a5a'}), WX, wy+.74, WZ, wellG, false);
+  [-1, 1].forEach(s => box(.1,1.9,.1, wPost, WX + .8*s, wy+.95, WZ, wellG, false));
+  box(1.6,.07,.07, wPost, WX, wy+1.6, WZ, wellG, false);
+  box(2.0,.1,1.0, mat('#a8443a'), WX, wy+1.95, WZ, wellG, false);
+  box(2.0,.1,.9, mat('#f4f7ff'), WX, wy+2.05, WZ, wellG, false);
+  blob(WX, WZ, 1.1, wellG).position.y = wy + .03;
+  TREES.push({x:WX, z:WZ, r:.95});
+
+  // 立て札（扉を出てすぐ右）
+  const SIGN = [dMid + 2.6, 5.4], sy = fieldH(SIGN[0], SIGN[1]) - .06;
+  const signG = hot('sign', {target:V3(SIGN[0], sy+1, SIGN[1]), r:4}, V3(SIGN[0], sy+2.0, SIGN[1]), props, '立て札', .2);
+  box(.12,1.5,.12, mat('#6b4426'), SIGN[0], sy+.75, SIGN[1], signG, false);
+  box(1.2,.6,.08, mat('#ffffff',{map:pixelTex(32, planks, 1, 1)}), SIGN[0], sy+1.35, SIGN[1]+.08, signG, false);
+  box(1.25,.08,.14, mat('#f4f7ff'), SIGN[0], sy+1.69, SIGN[1]+.08, signG, false);
+  TREES.push({x:SIGN[0], z:SIGN[1], r:.25});
+
+  // 峠の門：2本の柱と梁、左右の扉、錠前、その手前を分厚い氷がふさぐ
+  const gateG = hot('gate', {target:V3(0, 1.2, GATE_Z+1.3), r:5}, V3(0, 4.2, GATE_Z+.85), props, '峠の門', .3);
+  gateG.userData.spark.scale.setScalar(3);
+  const gPost = mat('#6b4426');
+  [-1.75, 1.75].forEach(x => box(.42,5.8,.42, gPost, x, 2.9, GATE_Z, gateG, false));
+  box(4.8,.42,.55, gPost, 0, 5.5, GATE_Z, gateG, false);
+  box(4.0,.28,.4, gPost, 0, 4.7, GATE_Z, gateG, false);
+  box(5.0,.16,.68, mat('#f4f7ff'), 0, 5.79, GATE_Z, gateG, false);
+  const leafM = mat('#ffffff',{map:pixelTex(32, planks, 1, 3)});
+  const leafL = new THREE.Group(); leafL.position.set(-1.55, 0, GATE_Z); gateG.add(leafL);   // 蝶番が回転の中心
+  const leafR = new THREE.Group(); leafR.position.set( 1.55, 0, GATE_Z); gateG.add(leafR);
+  box(1.55,4.3,.16, leafM,  .775, 2.15, 0, leafL, false);
+  box(1.55,4.3,.16, leafM, -.775, 2.15, 0, leafR, false);
+  [leafL, leafR].forEach((lf, i) => [1.1, 3.2].forEach(y => box(1.45,.14,.06, gPost, i ? -.775 : .775, y, .1, lf, false)));
+  const lock = box(.34,.42,.16, mat('#d9a441'), 0, 1.9, GATE_Z+.12, gateG, false);
+  const iceM = mat('#bfe3ff',{transparent:true, opacity:.6, emissive:'#28507a'});
+  const ice = box(3.6,4.7,.55, iceM, 0, 2.35, GATE_Z+.45, gateG, false);
+
+  const EXTRA_BOXES = [];   // 当たり判定に足す四角（物置・自販機）
+
+  // 吹きだまり：門の手前を横切る雪の山。かんじきがないと越えられない
+  const driftM = mat('#eef3ff');
+  for(let x=-19; x<=19; x+=2.6){
+    const z = GATE_Z + 4.6 + Math.sin(x*1.7)*.4, h = 1.1 + Math.abs(Math.sin(x*2.3))*.6;
+    add(new THREE.SphereGeometry(1.8, 8, 5), driftM, x, fieldH(x, z) - .3, z, outside, false).scale.set(1, h/1.8, .85);
+  }
+
+  // 物置：ダイヤル錠つき。扉は小屋のある西を向いている
+  const [SX, SZ] = SHED, shy = fieldH(SX, SZ) - .06;
+  const shedG = hot('shed', {target:V3(SX, shy+1, SZ), r:4.5}, V3(SX - 1.3, shy+2.6, SZ), props, '物置', 1.0);
+  shedG.userData.spark.scale.setScalar(2.5);
+  box(2.2, 2.0, 1.8, mat('#ffffff',{map:pixelTex(32, logs, 2, 2)}), SX, shy+1, SZ, shedG, false);
+  box(2.5, .16, 2.2, mat('#3f6fb5'), SX, shy+2.08, SZ, shedG, false);
+  box(2.6, .14, 2.3, mat('#f4f7ff'), SX, shy+2.22, SZ, shedG, false);
+  const shedDoor = new THREE.Group(); shedDoor.position.set(SX - 1.12, shy, SZ - .5); shedG.add(shedDoor);
+  box(.06, 1.6, 1.0, mat('#ffffff',{map:pixelTex(32, planks, 1, 2)}), 0, .8, .5, shedDoor, false);
+  const shedLock = box(.08, .22, .16, mat('#d9a441'), -.06, 1.0, .85, shedDoor, false);
+  blob(SX, SZ, 1.4, shedG, 1.2).position.y = shy + .03;
+  EXTRA_BOXES.push([SX - 1.15, SZ - .95, SX + 1.15, SZ + .95]);
+
+  // 自動販売機：雪原のまん中に、なぜか一台だけ
+  const [VX, VZ] = VEND, vy = fieldH(VX, VZ) - .06;
+  const vendG = hot('vend', {target:V3(VX, vy+1, VZ), r:4}, V3(VX, vy+2.4, VZ), props, '自動販売機', .55);
+  vendG.userData.spark.scale.setScalar(2.5);
+  box(.9, 1.9, .75, mat('#d23c3c'), VX, vy+.95, VZ, vendG, false);
+  box(.04, 1.0, .6, mat('#dff0ff',{emissive:'#7fb2e6'}), VX + .47, vy+1.25, VZ, vendG, false);
+  box(.05, .1, .1, mat('#ffe27a',{emissive:'#a07a00'}), VX + .48, vy+.6, VZ+.15, vendG, false);
+  box(.95, .1, .8, mat('#f4f7ff'), VX, vy+1.95, VZ, vendG, false);
+  const vendGlow = new THREE.Sprite(new THREE.SpriteMaterial({map:lanternGlowTex, color:'#9fd0ff', transparent:true, opacity:.55,
+    depthWrite:false, blending:THREE.AdditiveBlending}));
+  vendGlow.position.set(VX + .7, vy+1.25, VZ); vendGlow.scale.setScalar(2.2); vendG.add(vendGlow);
+  blob(VX, VZ, .7, vendG).position.y = vy + .03;
+  EXTRA_BOXES.push([VX - .5, VZ - .42, VX + .5, VZ + .42]);
+
+  // 正座している雪だるま（座布団つき）。しらべると、いつのまにか場所が変わる
+  const smG = hot('snowman', {target:V3(SNOWMAN0[0], 0, SNOWMAN0[1]), r:4}, V3(0,0,0), props, '雪だるま', .3);
+  const SM = new THREE.Group(); smG.add(SM);
+  const smWhite = mat('#f6f8ff');
+  add(new THREE.SphereGeometry(.55, 24, 16), smWhite, 0, .45, 0, SM, false).scale.set(1.15, .8, 1.25);   // 正座した下半身
+  add(new THREE.SphereGeometry(.4, 24, 16), smWhite, 0, 1.15, .05, SM, false);
+  box(1.1, .12, 1.1, mat('#7a3f8f'), 0, .06, 0, SM, false);                                            // 座布団
+  const coal = new THREE.MeshBasicMaterial({color:'#1a1a22'});
+  [-1, 1].forEach(s => { const e = new THREE.Mesh(new THREE.SphereGeometry(.05, 5, 4), coal); e.position.set(.13*s, 1.25, .37); SM.add(e); });
+  cyl(0, .06, .3, 5, mat('#f08a24'), 0, 1.15, .5, SM, false).rotation.x = Math.PI/2;                  // にんじんの鼻
+  [-1, 1].forEach(s => cyl(.02, .025, .55, 4, mat('#6b4426'), .45*s, .85, .15, SM, false).rotation.set(.9, 0, .5*s));  // 膝に置いた手
+  blob(0, 0, .75, SM).position.y = .03;
+  const smSpark = smG.userData.spark; smSpark.position.set(0, 1.9, 0); smSpark.scale.setScalar(2.5); SM.add(smSpark);
+  const smCol = {x:0, z:0, r:.6}; TREES.push(smCol);
+  function placeSnowman(x, z){
+    SM.position.set(x, fieldH(x, z) - .06, z);
+    SM.rotation.y = Math.atan2(-x, -z);                        // 小屋のほうを向いて座る
+    smG.userData.center = SM.position; smCol.x = x; smCol.z = z;
+  }
+  placeSnowman(SNOWMAN0[0], SNOWMAN0[1]);
+  let smTalk = 0, smMove = false, vendTalk = 0, shedWrong = 0;
+
+  /* ===== しらべた時の反応：状態に応じた文を返し、必要なら状態を進める ===== */
+  function lanternCheck(i){
+    const s = SYMS[i], l = lanterns[i];
+    if(l.lit) return `灯籠に火がともっている。火袋には「${s}」の印。`;
+    if(!inv.fire) return `石の灯籠。火袋に「${s}」の印が彫られている。火があれば、ともせそうだ。`;
+    if(i === litCount){                                          // 正しい順番
+      l.lit = true; l.g.userData.spark.visible = false; litCount++;
+      Sound.chime(litCount - 1);
+      if(litCount === 4){
+        sealed = false; Sound.rumble(); shake = Math.max(shake, .12);
+        return `「${s}」の灯籠に火を入れた。……四つの灯がそろった。北の崖のほうで、氷のくずれる音がした。`;
+      }
+      return `「${s}」の灯籠に火を入れた。（${litCount} / 4）`;
+    }
+    lanterns.forEach(o => { o.lit = false; o.g.userData.spark.visible = true; });   // 順番違い：すべて消える
+    litCount = 0; Sound.poof();
+    const c = l.g.userData.center; snowBurst(new THREE.Vector3(c.x, fieldH(c.x, c.z) - .06, c.z));
+    return `「${s}」の灯籠に火を入れた……とたんに冷たい風が吹き、ともした灯がすべて消えてしまった。順番がちがうのかもしれない。`;
+  }
+  function wellCheck(){
+    if(wellThawed) return '井戸の氷はとけている。暗い水面に、月が映っている。';
+    if(!inv.kettle) return '古い井戸。のぞきこむと、底まで氷が張っている。氷の下で、なにかが小さく光った。';
+    wellThawed = true; inv.kettle = false; inv.key = true;
+    wellIce.visible = false; wellG.userData.spark.visible = false;
+    snowBurst(new THREE.Vector3(WX, wy + .7, WZ)); Sound.chime(3);
+    return 'やかんの湯をそそぐと、白い湯気とともに氷がとけていく……。底から、古びた鍵を拾いあげた。【門の鍵を手に入れた】';
+  }
+  function gateCheck(){
+    if(gateOpen) return '門は開いている。この先が、ふもとへ下りる峠道だ。';
+    if(sealed) return '大きな木の門。分厚い氷にとざされて、錠前に手が届かない。氷の表面に「四つの灯をともせ」と彫られている。';
+    if(!inv.key) return '氷はとけた。だが門には大きな錠前がかかっている。鍵が必要だ。';
+    gateOpen = true; inv.key = false; lock.visible = false; gateG.userData.spark.visible = false;
+    Sound.door(); Sound.rumble(); Sound.chime(4);
+    return '鍵を差しこむと、錠前が重い音を立てて外れた。門がゆっくりと開いていく……。この先へ進めば、山を下りられる。';
+  }
+  function shedCheck(){
+    if(shedOpen) return 'からっぽの物置。なぜかマヨネーズの壺だけが残っている。';
+    openDial(); return null;                                   // 番号を合わせる画面を出す
+  }
+  /* 自販機：お金がなくても、つめたいおしるこが出てくる（ただし40秒の準備中あり。飴を入れると待たずに買える） */
+  const VEND_COOL = 40, GET = '【つめたいおしるこを手に入れた】';
+  const VEND_LINES = ['ガコン。おしるこが出てきた。つめたい。',
+    'ガコン。おしること一緒に、レシートが出てきた。「0円」。',
+    'ガコン。おしるこが出てきた。電源コードは、やっぱりどこにもつながっていない。',
+    'ガコン。……自販機が小さく「まいどあり」と言った。気がする。'];
+  function vendCheck(){
+    if(inv.oshiruko >= 2) return 'もう持ちきれない。自販機が少しさみしそうに光った。';
+    if(vendTalk === 0){
+      vendTalk++; vendCool = VEND_COOL; inv.oshiruko++; Sound.chime(1);
+      return `雪原のまん中に、自動販売機が立っている。ボタンはひとつだけ。「つめたい おしるこ」。お金は持っていない。……ためしに押してみると、ガコン。おしるこが出てきた。自販機が小さく「今日はいいよ」と言った。${GET}`;
+    }
+    if(vendCool > 0){
+      if(inv.candy > 0){
+        inv.candy--; inv.oshiruko++; Sound.chime(1);
+        return `「準備中」のランプがついている。……飴を入れてみた。ガコン。待たずに出てきた。${GET}`;
+      }
+      return `「準備中」のランプがついている。（あと${Math.ceil(vendCool)}秒）投入口の横に「飴も使えます」と書いてある。`;
+    }
+    vendCool = VEND_COOL; inv.oshiruko++; Sound.chime(1);
+    return VEND_LINES[(vendTalk++ - 1) % VEND_LINES.length] + GET;
+  }
+  /* おしるこをのむ：体力が満タンになり、5秒間は走っても減らない */
+  function drink(){
+    if(!started || inv.oshiruko <= 0 || card.classList.contains('show') || !dialEl.hidden) return;
+    inv.oshiruko--; boostT = 10; stamina = 100; tired = false;
+    Sound.chime(4); renderInv();
+    showAlert('「つめたい おしるこ」をのんだ。なぜか体があつくなってきた……！（10秒間、走りつづけられる）', false, 3500);
+  }
+  const SM_LINES = ['雪だるまが座布団の上で正座している。足がしびれているらしい。',
+    '「……となりで、正座しなさい」雪だるまにそう言われた気がした。',
+    'まだ正座している。……さっきより姿勢がいい。',
+    '雪だるまは、すっと目をそらした。',
+    'よく見ると、座布団が少し高そうだ。'];
+  function snowmanCheck(){
+    const t = SM_LINES[smTalk % SM_LINES.length] + (smTalk >= 1 ? '（さっきと場所がちがう気がする）' : '');
+    smTalk++; smMove = true;                                   // 目を離したすきに移動する
+    return t;
+  }
+  const SPOTS = {
+    lantern0:() => lanternCheck(0), lantern1:() => lanternCheck(1), lantern2:() => lanternCheck(2), lantern3:() => lanternCheck(3),
+    well:wellCheck, gate:gateCheck, shed:shedCheck, vend:vendCheck, snowman:snowmanCheck,
+    sign:() => { signG.userData.spark.visible = false;
+      return '立て札：「この先、北の崖に峠の門あり。門を越えれば、ふもとの村。夜は山姥が出る。追われたら、灯のある家へ逃げこむべし」'; }
+  };
+
+  /* ================= 光 ================= */
+  const hemi = new THREE.HemisphereLight('#9db8ff', '#4a3a58', .55); scene.add(hemi);
+  const moon = new THREE.DirectionalLight('#b4c8ff', .55);
+  moon.position.set(3.6,6,-9); moon.target.position.set(1.4,0,.6);
+  moon.castShadow = true; moon.shadow.mapSize.set(1024,1024); moon.shadow.bias = -.0015;
+  Object.assign(moon.shadow.camera, {left:-7, right:7, top:7, bottom:-7, near:1, far:26});
+  scene.add(moon, moon.target);
+
+  /* ================= 雪とほこり（Points） ================= */
+  function cloud(n, box3, color, size, additive){
+    const pos = new Float32Array(n*3), seed = new Float32Array(n);
+    for(let i=0;i<n;i++){
+      pos[i*3]   = THREE.MathUtils.lerp(box3[0], box3[1], Math.random());
+      pos[i*3+1] = THREE.MathUtils.lerp(box3[2], box3[3], Math.random());
+      pos[i*3+2] = THREE.MathUtils.lerp(box3[4], box3[5], Math.random());
+      seed[i] = Math.random()*Math.PI*2;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    const m = new THREE.PointsMaterial({color, size, sizeAttenuation:false, transparent:true, opacity:.9, depthWrite:false,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending});
+    const pts = new THREE.Points(geo, m); pts.userData = {box3, seed}; scene.add(pts);
+    return pts;
+  }
+  const snow = cloud(reduce ? 500 : 1800, [-20,24,-1,10,-34,-3.5], '#f4f7ff', 2, false);    // 大きさ固定の2ドットの四角い雪
+  const dust = cloud(reduce ? 30 : 80, [-3.9,-2.4,1.6,3.0,-2.0,.3], '#ffd696', 1.5, true);
+
+  /* ================= キャラクター用：なめらかな形とトゥーン調の陰影 =================
+     ・球は分割数を増やす。腕や脚は「カプセル」（筒の両端を半球にした形）を LatheGeometry で作る
+     ・胴や着物は、輪郭の点をなめらかな曲線（SplineCurve）でつなぎ、ろくろのように回して作る
+     ・陰影は MeshToonMaterial に4段階の明るさの表（gradientMap）を渡して、アニメ調のやわらかい段々にする */
+  const toonGrad = (() => {
+    const steps = [85, 150, 210, 255];                     // 暗い→明るい。RGBすべてに同じ値を入れる（赤だけだと全体が赤くなる）
+    const d = new Uint8Array(steps.flatMap(v => [v, v, v, 255]));
+    const t = new THREE.DataTexture(d, steps.length, 1, THREE.RGBAFormat);
+    t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true;
+    return t;
+  })();
+  function toon(color, o={}){ const m = new THREE.MeshToonMaterial(Object.assign({color, gradientMap:toonGrad}, o)); mats.push(m); return m; }
+  const SEG = 20;
+  const ball = r => new THREE.SphereGeometry(r, SEG + 4, SEG - 4);
+  function taperGeo(r1, r2, len){                    // 下の半径 r1・上の半径 r2 のカプセル（len は半球の中心どうしの距離）
+    const pts = [], n = 8;
+    for(let i=0;i<=n;i++){ const a = -Math.PI/2 + i/n*Math.PI/2; pts.push(new THREE.Vector2(Math.cos(a)*r1, Math.sin(a)*r1 - len/2)); }
+    for(let i=0;i<=n;i++){ const a = i/n*Math.PI/2; pts.push(new THREE.Vector2(Math.cos(a)*r2, Math.sin(a)*r2 + len/2)); }
+    return new THREE.LatheGeometry(pts, SEG);
+  }
+  function latheGeo(ctrl, phiStart=0, phiLen=Math.PI*2){   // [半径, 高さ] の点をなめらかにつないで回す
+    const pts = new THREE.SplineCurve(ctrl.map(([r, y]) => new THREE.Vector2(r, y))).getPoints(28);
+    return new THREE.LatheGeometry(pts, SEG + 4, phiStart, phiLen);
+  }
+  function part(geo, m, x, y, z, parent){ const mesh = new THREE.Mesh(geo, m); mesh.position.set(x, y, z); parent.add(mesh); return mesh; }
+  const blushM = new THREE.MeshBasicMaterial({color:'#f39a9a'});
+
+  /* ================= 操作キャラクター：旅人 =================
+     フードつきの長いコートを着た旅人。頭を大きめにした、やわらかい形。
+     脚は腰、腕は肩を回転の中心（ピボット）にして、振り子のように振って歩かせる */
+  const player = new THREE.Group(); scene.add(player);
+  const rig = new THREE.Group(); player.add(rig);           // 歩く時の上下の揺れはこちらに掛ける
+  const coatM = toon('#3a86b0'), furM = toon('#fbf6ec'), skinM = toon('#f2c9a4');
+  const pantsM = toon('#3b4160'), bootM = toon('#8a5a34'), mittenM = toon('#e2555c'), scarfM = toon('#f6cc4a');
+  function pivot(x, y, parent){ const g = new THREE.Group(); g.position.set(x, y, 0); parent.add(g); return g; }
+  // 脚（腰が回転の中心）
+  const legL = pivot(-.1, .62, rig), legR = pivot(.1, .62, rig);
+  [legL, legR].forEach(g => {
+    part(taperGeo(.06, .075, .34), pantsM, 0, -.25, 0, g);
+    part(ball(.095), bootM, 0, -.54, .05, g).scale.set(1, .75, 1.45);
+  });
+  // 胴：裾の広がったコートの輪郭を描いて回す。裾にファー、前にボタン、背中に袋
+  part(latheGeo([[0,.56],[.3,.58],[.31,.64],[.27,.8],[.22,.97],[.19,1.1],[.12,1.2],[0,1.23]]), coatM, 0, 0, 0, rig);
+  part(new THREE.TorusGeometry(.295, .05, 10, 28), furM, 0, .62, 0, rig).rotation.x = Math.PI/2;
+  [[.78,.268],[.9,.245],[1.02,.22]].forEach(([y, z]) => part(ball(.022), scarfM, 0, y, z, rig));
+  part(ball(.16), bootM, 0, 1.0, -.25, rig).scale.set(1, 1.15, .6);
+  // 腕（肩が回転の中心）
+  const armL = pivot(-.23, 1.13, rig), armR = pivot(.23, 1.13, rig);
+  [armL, armR].forEach((g, i) => {
+    part(taperGeo(.055, .065, .3), coatM, 0, -.2, 0, g);
+    part(ball(.08), mittenM, 0, -.42, 0, g);
+    g.rotation.z = i ? .4 : -.4;                           // 腕を外へ開いて、手袋がコートの外に出るように
+  });
+  // 頭：顔の球を、ひと回り大きいフードの球で後ろから包み、ファーの輪で縁どる。目と頬は塗りだけ
+  const headG = new THREE.Group(); headG.position.set(0, 1.42, 0); rig.add(headG);
+  part(ball(.2), skinM, 0, 0, .02, headG);
+  part(ball(.245), coatM, 0, .03, -.08, headG);
+  part(new THREE.TorusGeometry(.19, .055, 10, 28), furM, 0, .01, .1, headG);
+  const eyeM = new THREE.MeshBasicMaterial({color:'#2a2230'});
+  [-1, 1].forEach(s => {
+    part(ball(.026), eyeM, .07*s, .02, .2, headG).scale.set(1, 1.5, .6);
+    part(ball(.03), blushM, .12*s, -.05, .175, headG).scale.set(1.2, .7, .4);
+  });
+  const scarf = part(new THREE.TorusGeometry(.14, .06, 10, 24), scarfM, 0, 1.23, 0, rig);
+  scarf.rotation.x = Math.PI/2;
+  part(taperGeo(.04, .045, .16), scarfM, .09, 1.1, .19, rig).rotation.z = .15;   // マフラーの端
+  blob(0, 0, .32, player).position.y = .02;
+  player.position.set(-.4, 0, 1.6);
+
+  /* ================= NPC：クマ =================
+     冬眠しそびれた大きなクマ。四つ足で小屋の東側をのんびり歩き、旅人が近づくと振り向く */
+  const bearG = new THREE.Group(); scene.add(bearG);
+  const bearRig = new THREE.Group(); bearG.add(bearRig);
+  const furB = toon('#8a5634'), furL = toon('#d6ab80'), bearDark = new THREE.MeshBasicMaterial({color:'#1d1412'});
+  part(ball(.5), furB, 0, .8, 0, bearRig).scale.set(1.1, .95, 1.55);
+  part(ball(.34), furB, 0, 1.08, .4, bearRig);                                              // 肩の盛り上がり
+  part(ball(.3), toon('#f6f8ff'), 0, 1.2, -.1, bearRig).scale.set(1.25, .32, 1.45);         // 背中の雪
+  const bHead = new THREE.Group(); bHead.position.set(0, .98, .9); bearRig.add(bHead);
+  part(ball(.32), furB, 0, 0, 0, bHead);
+  part(ball(.16), furL, 0, -.08, .25, bHead).scale.set(1.05, .8, 1.15);                    // 鼻先
+  part(ball(.055), bearDark, 0, -.03, .42, bHead).scale.set(1.3, .9, 1);
+  [-1, 1].forEach(s => {
+    part(ball(.1), furB, .21*s, .24, -.02, bHead).scale.set(1, 1, .6);                     // 耳
+    part(ball(.06), furL, .21*s, .24, .03, bHead).scale.set(1, 1, .4);
+    part(ball(.032), bearDark, .12*s, .08, .28, bHead).scale.set(1, 1.3, .6);               // 目
+    part(ball(.035), blushM, .19*s, -.04, .23, bHead).scale.set(1.2, .7, .4);               // 頬
+  });
+  const bLegs = [[-.32,.5],[.32,.5],[-.32,-.5],[.32,-.5]].map(([x, z]) => {
+    const g = new THREE.Group(); g.position.set(x, .62, z); bearRig.add(g);
+    part(taperGeo(.12, .14, .3), furB, 0, -.3, 0, g);
+    part(ball(.14), furB, 0, -.56, .04, g).scale.set(1, .6, 1.3);
+    return g;
+  });
+  blob(0, 0, .95, bearG, .65).position.y = .02;
+  // なぜかネクタイをしている
+  const tieM = toon('#d6454c');
+  part(ball(.06), tieM, 0, .66, 1.0, bearRig).scale.set(1.2, .9, .8);
+  const tie = part(taperGeo(.065, .03, .26), tieM, 0, .45, .97, bearRig); tie.scale.z = .35; tie.rotation.x = -.15;
+  const BEAR_HOME = new THREE.Vector3(7.2, 0, .6);
+  bearG.position.copy(BEAR_HOME);
+  bearG.userData = {key:'bear', center:bearG.position};
+  const bear = {state:'idle', timer:2, target:new THREE.Vector3(), facing:-Math.PI/2, phase:0, swing:0, talkIdx:0, asleep:false};
+
+  const BEAR_LINES = [
+    '……おや、旅のひと。山を下りたいのかい。北の峠の門の手前には吹きだまりがあって、かんじきがないと越えられないよ。',
+    'かんじきなら持っているよ。……はちみつと交換なら、考えてもいい。物置にあった気がするなあ。',
+    '門は氷でとざされているそうだ。雪原の灯籠と、なにか関係があるとか。',
+    'このネクタイかい？ 春に大事な会議があってね。議題はまだ決まっていない。',
+    '西の井戸は、冬になると底まで凍る。湯でもかけないかぎり、とけやしない。',
+    '山姥は、灯のともった家には入れない。でも、待つのは得意らしい。',
+    '山姥は礼儀にうるさいらしい。正座している相手には、手を出さないとか。'
+  ];
+  const BEAR_SLEEP = '門が開いたのかい。よかったね、旅のひと。気をつけてお行き。わたしもそろそろ、春まで眠るとしよう。';
+
+  function turnBear(want, k){
+    let d = want - bear.facing; d = Math.atan2(Math.sin(d), Math.cos(d));
+    bear.facing += d * Math.min(1, k);
+  }
+  function updateBear(dt, t){
+    const p = bearG.position, pp = player.position;
+    const near = Math.hypot(pp.x - p.x, pp.z - p.z) < 3;
+    let walking = false;
+    if(bear.asleep){
+      bearRig.position.y += (-.32 - bearRig.position.y) * Math.min(1, dt*2);     // 伏せて眠る
+      bHead.rotation.x += (.35 - bHead.rotation.x) * Math.min(1, dt*2);
+    } else if(near || bear.state === 'talk'){
+      turnBear(Math.atan2(pp.x - p.x, pp.z - p.z), dt*3);                         // 旅人のほうを向く
+    } else {
+      bear.timer -= dt;
+      if(bear.state === 'idle' && bear.timer <= 0){                              // 家のまわりの適当な点へ歩く
+        const a = Math.random()*Math.PI*2, r = Math.random()*2.2;
+        bear.target.set(BEAR_HOME.x + Math.cos(a)*r, 0, BEAR_HOME.z + Math.sin(a)*r);
+        bear.state = 'walk';
+      }
+      if(bear.state === 'walk'){
+        const dx = bear.target.x - p.x, dz = bear.target.z - p.z;
+        if(Math.hypot(dx, dz) < .15){ bear.state = 'idle'; bear.timer = 2 + Math.random()*4; }
+        else {
+          turnBear(Math.atan2(dx, dz), dt*2.5);
+          p.x += Math.sin(bear.facing) * .6 * dt; p.z += Math.cos(bear.facing) * .6 * dt;
+          walking = true;
+        }
+      }
+    }
+    p.y = groundY(p.x, p.z);
+    bearG.rotation.y = bear.facing;
+    bear.swing += ((walking ? .45 : 0) - bear.swing) * Math.min(1, dt*6);
+    if(walking) bear.phase += dt*5;
+    const s = Math.sin(bear.phase) * bear.swing;                                   // 対角の脚を同時に出す
+    bLegs[0].rotation.x = s; bLegs[3].rotation.x = s; bLegs[1].rotation.x = -s; bLegs[2].rotation.x = -s;
+    if(!reduce) bearRig.scale.y = 1 + Math.sin(t*1.3) * .015;                      // ゆっくり呼吸
+    if(bear.state === 'talk' && !reduce) bHead.rotation.x = Math.sin(t*6) * .06;   // 話しながら小さくうなずく
+  }
+  function talk(){
+    bear.state = 'talk'; focused = bearG;
+    let line;
+    if(gateOpen){ line = BEAR_SLEEP; bear.asleep = true; }
+    else if(!inv.shoes && (inv.honey || inv.oshiruko > 0)){        // はちみつ（または、つめたいおしるこ）と、かんじきを交換
+      inv.shoes = true;
+      if(inv.honey){ inv.honey = false; line = 'おお、はちみつ！ ……ありがとう。代わりに、これをあげよう。冬眠の前に編んだかんじきだ。【かんじきを手に入れた】'; }
+      else { inv.oshiruko--; line = 'おしるこ？ ……つめたいね。でも気持ちはうれしい。代わりに、かんじきをあげよう。【かんじきを手に入れた】'; }
+      Sound.chime(3); renderInv();
+    }
+    else { line = BEAR_LINES[bear.talkIdx % BEAR_LINES.length]; bear.talkIdx++; }
+    Sound.grunt();
+    show('', 'クマ', line);
+  }
+
+  /* ================= 山姥 =================
+     家ほどの背丈がある山姥。2〜4分に一度、雪の中から現れて30秒追いかけてくる。
+     状態は「待機 → 予告(3秒) → 追跡(30秒) → 退場」の繰り返し。家の中には入れない */
+  const yamaG = new THREE.Group(); yamaG.visible = false; scene.add(yamaG);
+  const yRig = new THREE.Group(); yamaG.add(yRig);
+  const kimonoM = toon('#4a4468'), kimonoDark = toon('#363152'), obiM = toon('#a83c3c'), yskin = toon('#dfcab0'), hairM = toon('#f3f1ea');
+  const yEyeM = new THREE.MeshBasicMaterial({color:'#ffcc33'}), yMouthM = new THREE.MeshBasicMaterial({color:'#1a0d10'});
+  // 裾の広がった着物：輪郭を描いて回す。裾を少し上げて、足が見えるように
+  part(latheGeo([[0,.36],[1.55,.38],[1.5,.9],[1.22,1.8],[1.02,2.6],[.9,3.25],[0,3.3]]), kimonoM, 0, 0, 0, yRig);
+  const yFeet = [-.55, .55].map(x => { const f = part(ball(.32), yskin, x, .14, .35, yRig); f.scale.set(.85, .45, 1.5); return f; });
+  const torso = new THREE.Group(); torso.position.set(0, 3.1, 0); torso.rotation.x = .35; yRig.add(torso);   // 前かがみ
+  part(latheGeo([[0,0],[.98,.05],[.95,.6],[.85,1.3],[.6,1.75],[0,1.85]]), kimonoM, 0, 0, 0, torso);
+  part(new THREE.TorusGeometry(.97, .17, 10, 32), obiM, 0, .28, 0, torso).rotation.x = Math.PI/2;   // 帯
+  const yArms = [-.92, .92].map(x => {
+    const g = pivot(x, 1.55, torso);
+    part(taperGeo(.42, .3, .9), kimonoDark, 0, -.7, 0, g);                    // 袖
+    part(taperGeo(.1, .12, .8), yskin, 0, -1.55, 0, g);                       // 細い腕
+    part(ball(.24), yskin, 0, -2.1, 0, g).scale.set(1, .85, 1.1);             // 手
+    [-.12, 0, .12].forEach(fx => part(taperGeo(.035, .045, .32), yskin, fx, -2.45, .04, g));   // 長い指
+    g.rotation.x = -1.25;                                                       // 腕を前へ伸ばす
+    return g;
+  });
+  const yHead = new THREE.Group(); yHead.position.set(0, 2.3, .25); torso.add(yHead);
+  part(ball(.78), yskin, 0, 0, 0, yHead).scale.set(1, 1.1, .95);
+  [-1, 1].forEach(s => part(ball(.12), yEyeM, .28*s, .12, .68, yHead).scale.set(1.2, .8, .5));
+  part(ball(.3), yMouthM, 0, -.36, .64, yHead).scale.set(1, .22, .25);
+  // 背中に垂れる長い白髪：後ろ半分だけ回した面
+  part(latheGeo([[.55,.75],[.9,.3],[1.05,-.5],[1.25,-1.5],[1.45,-2.6],[1.2,-2.8]], Math.PI/2, Math.PI),
+       toon('#f3f1ea', {side:THREE.DoubleSide}), 0, 0, -.1, yHead);
+  const hairGeo = new THREE.ConeGeometry(.15, 1.5, 8), tmpV = new THREE.Vector3();
+  for(let i=0;i<16;i++){                                                       // 四方に逆立つ白髪
+    const a = (i/16)*Math.PI*2, up = .25 + (i%3)*.25;
+    const dir = tmpV.set(Math.sin(a)*.9, up, Math.cos(a)*.6 - .25).normalize();
+    if(dir.z > .55) continue;                                                  // 顔の前は空けておく
+    const h = add(hairGeo, hairM, dir.x*.75, dir.y*.75, dir.z*.75, yHead, false);
+    h.lookAt(yHead.localToWorld(dir.clone().multiplyScalar(3)));
+    h.rotateX(Math.PI/2);
+  }
+  blob(0, 0, 2.0, yamaG).position.y = .03;
+  const yamaLight = new THREE.PointLight('#ff8844', 0, 9, 2); yamaLight.position.set(0, 5.5, 1.5); yamaG.add(yamaLight);
+
+  const FAST = location.hash === '#yamanba';                                   // 試す用：#yamanba を付けると早く来る
+  const nextDelay = () => FAST ? 40 + Math.random()*20 : 60 + Math.random()*45;      // 1〜1分45秒おき
+  const yama = {state:'wait', next: FAST ? 10 : 45 + Math.random()*20, timer:0, chase:0, rise:0, sink:0,
+                facing:0, phase:0, shownSec:-1, shownQ:'', knock:0, quip:'', sitK:0, fadeMul:1};
+  const QUIPS = ['', '', '（山姥は早歩きのつもりらしい）', '（山姥のおなかが鳴った）', '（山姥は少し楽しそうだ）'];
+  // 家に隠れている間だけ、山姥が扉の外から声をかけてくる
+  const VOICE_LINES = ['出てこ〜い……',
+    'おいしい飴があるよぉ……',
+    'ちょっとだけ……ちょっとだけでいいから……',
+    'あけておくれぇ……さむいんだよぉ……',
+    '灯りを消してくれたら、すぐ帰るから……',
+    'さっき、おしるこ飲んでたでしょう……見てたよ……',
+    'おせんべいもあるよぉ……しけってるけど……',
+    'その家、ほんとはあたしの別荘なんだけどねぇ……'];
+  const VOICE_END = '……今日はこのへんにしといてやる……';
+  const voiceEl = document.getElementById('voice'), voicePos = new THREE.Vector3();
+  // 家に隠れている間は、山姥を半透明にして家の中が見えるようにする（丸影は他と共用なので除く）
+  const yamaMats = [];
+  yamaG.traverse(o => { if(o.isMesh && o.material !== blobM && !yamaMats.includes(o.material)) yamaMats.push(o.material); });
+  yamaMats.forEach(m => { m.transparent = true; });
+  const yamaBusy = () => yama.state === 'warn' || yama.state === 'chase';
+  const DOOR_FRONT = new THREE.Vector3(dMid, 0, DOOR.z + 2.6);
+  let shake = 0;
+  const alertEl = document.getElementById('alert'), flashEl = document.getElementById('flash');
+  let alertTimer = null;
+  function showAlert(text, red, ms){
+    alertEl.textContent = text; alertEl.classList.toggle('red', !!red); alertEl.hidden = false;
+    clearTimeout(alertTimer); if(ms) alertTimer = setTimeout(() => { alertEl.hidden = true; }, ms);
+    document.getElementById('liveText').textContent = text;
+  }
+  function endChase(){
+    stage.classList.remove('danger');
+    yama.state = 'wait'; yama.next = nextDelay();
+  }
+  function spawnYama(){
+    const a = Math.random()*Math.PI*2, pp = player.position;
+    let x = pp.x + Math.sin(a)*18, z = pp.z + Math.cos(a)*18;
+    const R = Math.hypot(x, z); if(R > 27){ x *= 27/R; z *= 27/R; }
+    if(Math.abs(x) < 6 && Math.abs(z) < 5){ x = 12; z = 8; }                  // 家に重ならない場所へ
+    z = Math.max(z, GATE_Z + 3);                                               // 崖の向こうには出ない
+    yamaG.position.set(x, groundY(x, z), z);
+    yama.facing = Math.atan2(pp.x - x, pp.z - z);
+    yamaG.visible = true; yama.rise = 0; yRig.position.y = -7;
+    yama.fadeMul = 1; yHead.rotation.x = 0;                                   // 前回うなだれて帰った姿勢を戻す
+    yamaLight.intensity = .9;
+    snowBurst(yamaG.position.clone());
+  }
+  function caught(){
+    yamaCaught++; inv.candy++;
+    setTimeout(() => gotItem('飴'), 6000);                                    // つかまった時の文章が消えてから出す
+    const lost = [];                                                          // 火種とやかんは落としてしまう
+    if(inv.fire){ inv.fire = false; fireT = 0; lost.push('火種'); }
+    if(inv.kettle){ inv.kettle = false; [kettle, spout, handle].forEach(m => { m.visible = true; }); lost.push('やかん'); }
+    Sound.gong();
+    flashEl.classList.add('on'); requestAnimationFrame(() => requestAnimationFrame(() => flashEl.classList.remove('on')));
+    yamaG.visible = false; yamaLight.intensity = 0;
+    player.position.set(2.2, 0, -1.0); facing = Math.PI;                     // 気がつくとストーブの前
+    showAlert(`つかまった……。山姥に頭をなでられ、なぜか飴をもらった。${lost.length ? lost.join('と') + 'は落としてしまった。' : ''}気がつくと、ストーブの前にいた。`, true, 6000);
+    renderInv();
+    endChase();
+  }
+  // 家の外壁を、山姥の太さぶん広げた四角として避ける
+  function yamaCollide(p){
+    const r = 1.1, x0 = -4.25, x1 = 4.25, z0 = -3.25, z1 = 3.25;
+    const cx = Math.min(x1, Math.max(x0, p.x)), cz = Math.min(z1, Math.max(z0, p.z));
+    const dx = p.x - cx, dz = p.z - cz, d = Math.hypot(dx, dz);
+    if(d < r && d > 1e-4){ p.x = cx + dx/d*r; p.z = cz + dz/d*r; }
+    const R = Math.hypot(p.x, p.z); if(R > 29){ p.x *= 29/R; p.z *= 29/R; }
+    if(p.z < GATE_Z + 2) p.z = GATE_Z + 2;                                     // 崖の手前まで
+  }
+  function updateYama(dt, t){
+    if(!started) return;
+    const busyUI = card.classList.contains('show') || mode !== 'room' || !dialEl.hidden;
+    const pp = player.position, yp = yamaG.position;
+    if(yama.state === 'wait'){
+      if(!busyUI){ yama.next -= dt; }
+      if(yama.next <= 0 && !busyUI){
+        yama.state = 'warn'; yama.timer = 3;
+        stage.classList.add('danger'); Sound.rumble();
+        showAlert('……雪の向こうから、なにかが近づいてくる', true);
+      }
+    } else if(yama.state === 'warn'){
+      yama.timer -= dt;
+      if(yama.timer <= 0){
+        spawnYama(); yama.state = 'chase'; yama.chase = 30; yama.shownSec = -1;
+        yama.quip = QUIPS[Math.floor(Math.random()*QUIPS.length)];
+        yama.voiceIdx = Math.floor(Math.random()*VOICE_LINES.length); yama.voiceT = 1;
+      }
+    } else if(yama.state === 'chase'){
+      yama.chase -= dt * (inRoom(pp.x, pp.z) ? .5 : 1);                      // 家に隠れている間は、時間が半分しか進まない
+      const sec = Math.ceil(Math.max(0, yama.chase));
+      const q = (seiza && yama.sitK > .5) ? '（山姥も正座した。雪だるまの説教が始まった）' : seiza ? '（正座して待つ……）' : yama.quip;
+      if(sec !== yama.shownSec || q !== yama.shownQ){ yama.shownSec = sec; yama.shownQ = q; alertEl.textContent = `山姥から逃げろ！ のこり ${sec}${q}`; }
+      // 雪の中からせり上がって現れる
+      yama.rise = Math.min(1, yama.rise + dt);
+      yRig.position.y = -7 * Math.pow(1 - yama.rise, 2);
+      const inHouse = inRoom(pp.x, pp.z);
+      let tgt = inHouse ? DOOR_FRONT : pp;                                    // 家の中にいる時は扉の前で待ち構える
+      if(seiza){                                                               // 正座している相手の、少し手前で止まる
+        const ax = yp.x - pp.x, az = yp.z - pp.z, al = Math.hypot(ax, az) || 1;
+        tgt = {x: pp.x + ax/al*2.6, z: pp.z + az/al*2.6};
+      }
+      const dx = tgt.x - yp.x, dz = tgt.z - yp.z, d = Math.hypot(dx, dz);
+      let walking = false;
+      if(yama.rise >= 1 && d > .4){
+        let df = Math.atan2(dx, dz) - yama.facing; df = Math.atan2(Math.sin(df), Math.cos(df));
+        yama.facing += df * Math.min(1, dt*3);
+        const speed = 3.6;                                                    // 歩き 2.3 より速く、走り 4.4 より遅い（ただし走れるのは体力がある間だけ）
+        yp.x += Math.sin(yama.facing)*speed*dt; yp.z += Math.cos(yama.facing)*speed*dt;
+        yamaCollide(yp);
+        walking = true;
+      } else if(seiza && yama.rise >= 1){                                      // 向かい合って正座する
+        let df = Math.atan2(pp.x - yp.x, pp.z - yp.z) - yama.facing; df = Math.atan2(Math.sin(df), Math.cos(df));
+        yama.facing += df * Math.min(1, dt*3);
+      } else if(inHouse && yama.rise >= 1){                                    // 扉の前で家を揺らす
+        let df = Math.atan2(pp.x - yp.x, pp.z - yp.z) - yama.facing; df = Math.atan2(Math.sin(df), Math.cos(df));
+        yama.facing += df * Math.min(1, dt*3);
+        yama.knock -= dt;
+        if(yama.knock <= 0){ yama.knock = 1.3; Sound.thud(1); shake = Math.max(shake, .18); }
+      }
+      // 家に隠れている間だけ、3秒ごとに声をかけてくる（残りわずかになると捨てぜりふ）
+      if(inHouse && yama.rise >= 1){
+        yama.voiceT -= dt;
+        if(yama.voiceT <= 0){
+          yama.voiceT = 3.2;
+          voiceEl.textContent = yama.chase < 6 ? VOICE_END : VOICE_LINES[yama.voiceIdx++ % VOICE_LINES.length];
+          voiceEl.hidden = false; Sound.grunt();
+        }
+      } else if(!voiceEl.hidden){ voiceEl.hidden = true; yama.voiceT = .8; }
+      yp.y = groundY(yp.x, yp.z);
+      yamaG.rotation.y = yama.facing;
+      yama.sitK += (((seiza && d < .8) ? 1 : 0) - yama.sitK) * Math.min(1, dt*4);
+      yRig.position.y -= 1.1 * yama.sitK;                                      // 山姥も正座（ぐっと低くなる）
+      // 歩き：足を交互に出し、腕を揺らし、ずしんと揺れる
+      if(walking){
+        const prev = yama.phase; yama.phase += dt*4.5;
+        if(Math.floor(prev/Math.PI) !== Math.floor(yama.phase/Math.PI)){
+          const near = Math.max(0, 1 - Math.hypot(pp.x - yp.x, pp.z - yp.z)/22);
+          Sound.thud(.3 + near*.7); shake = Math.max(shake, near*.16);
+          if(!reduce) snowBurst(yp.clone(), true);
+        }
+      }
+      const s = Math.sin(yama.phase);
+      yFeet[0].position.z = .3 + s*.5; yFeet[1].position.z = .3 - s*.5;
+      yArms[0].rotation.x = -1.25 + s*.25; yArms[1].rotation.x = -1.25 - s*.25;
+      yRig.rotation.z = reduce ? 0 : s*.04;
+      yHead.rotation.y = reduce ? 0 : Math.sin(t*1.7)*.15;
+      // つかまったか、逃げ切ったか
+      if(!inHouse && !seiza && yama.rise >= 1 && Math.hypot(pp.x - yp.x, pp.z - yp.z) < 1.7){ caught(); return; }
+      if(yama.chase <= 0){
+        yama.state = 'leave'; yama.sink = 0; yamaEscapes++;
+        smMove = true;                                                          // 雪だるまは次の場所へ（同じ隠れ場所は続けて使えない）
+        Sound.chime(0); setTimeout(() => Sound.chime(4), 300);
+        showAlert('山姥は諦めて帰ったようだ……', false, 4500);
+        stage.classList.remove('danger');
+      }
+    } else if(yama.state === 'leave'){
+      // 諦めて、北の山のほうへとぼとぼ歩いて帰っていく。だんだん霞んで、山の中へ消える
+      yama.sink += dt;
+      yama.sitK += (0 - yama.sitK) * Math.min(1, dt*3);                         // 正座していたら立ち上がる
+      yRig.position.y = -1.1 * yama.sitK;
+      const dx = yp.x*.3 - yp.x, dz = -48 - yp.z;                               // 門のずっと奥、遠くの山
+      let df = Math.atan2(dx, dz) - yama.facing; df = Math.atan2(Math.sin(df), Math.cos(df));
+      yama.facing += df * Math.min(1, dt*1.5);
+      yama.fadeMul = clamp(1 - (yama.sink - 3.5)/5, 0, 1);
+      if(yama.sink > 1){                                                        // 振り向いてから歩き出す
+        yp.x += Math.sin(yama.facing) * 2.4 * dt; yp.z += Math.cos(yama.facing) * 2.4 * dt;
+        const prev = yama.phase; yama.phase += dt*3.5;
+        if(Math.floor(prev/Math.PI) !== Math.floor(yama.phase/Math.PI)){
+          const near = Math.max(0, 1 - Math.hypot(pp.x - yp.x, pp.z - yp.z)/22);
+          Sound.thud((.15 + near*.5) * yama.fadeMul);
+        }
+      }
+      yp.y = groundY(yp.x, yp.z);
+      yamaG.rotation.y = yama.facing;
+      const s = Math.sin(yama.phase);
+      yFeet[0].position.z = .3 + s*.4; yFeet[1].position.z = .3 - s*.4;
+      yArms[0].rotation.x = -.2 + s*.12; yArms[1].rotation.x = -.2 - s*.12;    // 腕はだらんと下げる
+      yHead.rotation.x += (.35 - yHead.rotation.x) * Math.min(1, dt*2);         // うなだれる
+      yRig.rotation.z = reduce ? 0 : s*.03;
+      yamaLight.intensity = .9 * yama.fadeMul;
+      if(yama.sink > 8.5){ yamaG.visible = false; yama.fadeMul = 1; endChase(); }
+    }
+  }
+
+  /* 当たり判定：壁と家具は床から見た四角形 [x0, z0, x1, z1]、木は円 */
+  const BOXES = [
+    [-4.25,-3.25, 4.25,-3.0],   // 奥の壁
+    [-4.25,-3.25,-4.0, 3.25],   // 左の壁
+    [ 4.0,-3.25, 4.25, 3.25],   // 右の壁
+    [-4.25, 3.0, 1.5, 3.25],    // 手前の壁（扉の左）
+    [ 2.8, 3.0, 4.25, 3.25],    // 手前の壁（扉の右）。1.5〜2.8 の隙間が扉
+    [-3.95,-1.8,-2.75, .6],     // 机
+    [ 2.7,-2.65, 3.7,-1.75],    // ストーブ
+    [  .15, .25, 1.05, 1.15],   // 椅子
+    ...EXTRA_BOXES,             // 物置・自販機
+  ];
+  // 線分（カメラ→旅人）が四角（家）を横切るか。Liang–Barsky法で、線分を四角の4辺で切りつめていく
+  function segHitsRect(x0, z0, x1, z1, rx0, rz0, rx1, rz1){
+    let t0 = 0, t1 = 1;
+    const dx = x1 - x0, dz = z1 - z0;
+    const P = [-dx, dx, -dz, dz], Q = [x0 - rx0, rx1 - x0, z0 - rz0, rz1 - z0];
+    for(let i=0;i<4;i++){
+      if(P[i] === 0){ if(Q[i] < 0) return false; continue; }
+      const r = Q[i] / P[i];
+      if(P[i] < 0){ if(r > t1) return false; if(r > t0) t0 = r; }
+      else { if(r < t0) return false; if(r < t1) t1 = r; }
+    }
+    return true;
+  }
+  let driftMsgT = 0;
+  function driftBump(){                                       // 吹きだまりにぶつかった時の一言（5秒に1回まで）
+    const n = performance.now();
+    if(n - driftMsgT > 5000){ driftMsgT = n; showAlert('雪が深すぎて、足が沈んで進めない。かんじきがあれば……', false, 3500); }
+  }
+  const PR = .3;                // キャラクターの半径
+  function collide(p){
+    for(const [x0,z0,x1,z1] of BOXES){
+      const cx = Math.min(x1, Math.max(x0, p.x)), cz = Math.min(z1, Math.max(z0, p.z));
+      const dx = p.x - cx, dz = p.z - cz, d = Math.hypot(dx, dz);
+      if(d >= PR) continue;
+      if(d > 1e-4){ p.x = cx + dx/d*PR; p.z = cz + dz/d*PR; }
+      else {                                            // 四角の内側に入ったら一番近い辺へ出す
+        const e = [[p.x-x0,-1,0],[x1-p.x,1,0],[p.z-z0,0,-1],[z1-p.z,0,1]].sort((a,b) => a[0]-b[0])[0];
+        p.x += e[1]*(e[0]+PR); p.z += e[2]*(e[0]+PR);
+      }
+    }
+    for(const t of TREES){
+      const dx = p.x - t.x, dz = p.z - t.z, d = Math.hypot(dx, dz), m = t.r + PR;
+      if(d < m && d > 1e-4){ p.x = t.x + dx/d*m; p.z = t.z + dz/d*m; }
+    }
+    const bx = p.x - bearG.position.x, bz = p.z - bearG.position.z, bd = Math.hypot(bx, bz), bm = .85 + PR;
+    if(bd < bm && bd > 1e-4){ p.x = bearG.position.x + bx/bd*bm; p.z = bearG.position.z + bz/bd*bm; }   // クマにもぶつかる
+    const R = Math.hypot(p.x, p.z); if(R > 30){ p.x *= 30/R; p.z *= 30/R; }
+    // 吹きだまり：かんじきがないと、ここから北へは進めない
+    if(!inv.shoes && p.z < GATE_Z + 6.2){ p.z = GATE_Z + 6.2; driftBump(); }
+    // 北の崖：門が開くまでは手前で止める。開いたら門の幅の中だけ通れる
+    const front = GATE_Z + ((sealed && Math.abs(p.x) < 2.3) ? 1.05 : .4);
+    if(p.z < front){
+      if(!gateOpen) p.z = front;
+      else if(Math.abs(p.x) > 1.1){ if(p.z > GATE_Z - .2) p.z = front; else p.x = clamp(p.x, -1.1, 1.1); }
+    }
+  }
+  const inRoom = (x, z) => x > -4.05 && x < 4.05 && z > -3.05 && z < 3.05;
+  const groundY = (x, z) => inRoom(x, z) ? 0 : fieldH(x, z) - .06;
+
+  /* 足跡：雪原で着地するたびに小さな楕円を2つ置き、10秒で消す */
+  const prints = [], printGeo = new THREE.CircleGeometry(.07, 6);
+  const printBase = new THREE.MeshBasicMaterial({color:'#8fa3dc', transparent:true, opacity:.85, depthWrite:false,
+    polygonOffset:true, polygonOffsetFactor:-2});
+  let facing = 0;
+  function land(p, run, side){
+    if(inRoom(p.x, p.z)) return;
+    Sound.step();
+    {
+      let pr;
+      if(prints.length >= 80){ pr = prints.shift(); pr.age = 0; }
+      else { pr = {mesh:new THREE.Mesh(printGeo, printBase.clone()), age:0}; scene.add(pr.mesh); }
+      const x = p.x + Math.cos(facing)*.1*side, z = p.z - Math.sin(facing)*.1*side;
+      pr.mesh.position.set(x, groundY(x, z) + .025, z);
+      pr.mesh.rotation.set(-Math.PI/2, 0, facing); pr.mesh.scale.set(1, 1.8, 1);   // 長靴の形の楕円
+      prints.push(pr);
+    }
+    if(run && !reduce) snowBurst(p.clone(), true);      // 走ると小さく雪が跳ねる
+  }
+  function updatePrints(dt){
+    for(let i = prints.length-1; i >= 0; i--){
+      const pr = prints[i]; pr.age += dt;
+      pr.mesh.material.opacity = .85 * Math.max(0, 1 - pr.age/10);
+      if(pr.age > 10){ scene.remove(pr.mesh); pr.mesh.material.dispose(); prints.splice(i, 1); }
+    }
+  }
+
+  /* 毎フレームの移動：カメラの向きを基準に前後左右を決め、ぴょんぴょん跳ねて進む */
+  const keys = new Set(), joy = {x:0, y:0};
+  const fwd = new THREE.Vector3(), right = new THREE.Vector3(), mv = new THREE.Vector3();
+  let stepPhase = 0, swingAmt = 0, lean = 0, candidate = null, started = false, moving = false;
+  function updatePlayer(dt){
+    let ix = 0, iz = 0, run = false;
+    const busy = !started || mode !== 'room' || card.classList.contains('show') || !dialEl.hidden;
+    if(!busy){
+      if(keys.has('w') || keys.has('arrowup')) iz += 1;
+      if(keys.has('s') || keys.has('arrowdown')) iz -= 1;
+      if(keys.has('d') || keys.has('arrowright')) ix += 1;
+      if(keys.has('a') || keys.has('arrowleft')) ix -= 1;
+      run = keys.has('shift');
+      if(joy.x || joy.y){ ix += joy.x; iz -= joy.y; run = run || Math.hypot(joy.x, joy.y) > .92; }
+    }
+    if(boostT > 0){ stamina = 100; tired = false; }       // おしるこの効果中は体力が減らない
+    if(tired) run = false;                                // 息切れ中は走れない
+    const p = player.position, mag = Math.min(1, Math.hypot(ix, iz));
+    moving = mag > .12;
+    // 体力：走ると減り、0になると40まで回復するまで走れない
+    stamina = clamp(stamina + ((moving && run) ? -17 : (moving ? 14 : 22)) * dt, 0, 100);   // 満タンから約6秒走れる
+    if(stamina <= 0) tired = true;
+    if(tired && stamina >= 40) tired = false;
+    if(moving){
+      fwd.set(cam.target.x - camera.position.x, 0, cam.target.z - camera.position.z).normalize();
+      right.set(-fwd.z, 0, fwd.x);
+      mv.copy(fwd).multiplyScalar(iz).addScaledVector(right, ix).normalize();
+      const speed = (run ? 4.4 : 2.3) * mag;
+      p.x += mv.x * speed * dt; p.z += mv.z * speed * dt;
+      collide(p);
+      let d = Math.atan2(mv.x, mv.z) - facing; d = Math.atan2(Math.sin(d), Math.cos(d));
+      facing += d * Math.min(1, dt*12);
+      const prev = stepPhase;
+      stepPhase += dt * (run ? 11 : 7.5);
+      const step = Math.floor(stepPhase / Math.PI);
+      if(Math.floor(prev / Math.PI) !== step) land(p, run, step % 2 ? 1 : -1);   // 片足が着いた瞬間
+    }
+    player.rotation.y = facing;
+    p.y = groundY(p.x, p.z);
+    // 歩き：脚と腕を逆向きに振り、体を少し上下させる。走ると振りを大きく、少し前傾
+    swingAmt += ((moving ? (run ? .95 : .6) : 0) - swingAmt) * Math.min(1, dt*10);
+    const sw = Math.sin(stepPhase) * swingAmt;
+    legL.rotation.x = sw; legR.rotation.x = -sw;
+    armL.rotation.x = -sw * .8; armR.rotation.x = sw * .8;
+    rig.position.y = reduce ? 0 : Math.abs(Math.sin(stepPhase)) * .05 * swingAmt;
+    lean += (((moving && run) ? .12 : 0) - lean) * Math.min(1, dt*8);
+    rig.rotation.x = lean;
+    // 山姥に追われている時、雪だるまのとなりでじっとしていると正座する
+    const nearSM = Math.hypot(p.x - SM.position.x, p.z - SM.position.z) < 2.3;
+    stillT = (yama.state === 'chase' && nearSM && !moving) ? stillT + dt : 0;
+    const wasSeiza = seiza; seiza = stillT > .8;
+    if(seiza && !wasSeiza){                               // 雪だるまと同じ向きに座りなおす
+      facing = SM.rotation.y; Sound.blip();
+    }
+    seizaK += ((seiza ? 1 : 0) - seizaK) * Math.min(1, dt*8);
+    if(seizaK > .01){
+      legL.rotation.x = legR.rotation.x = -1.45*seizaK;   // 脚をたたんで
+      armL.rotation.x = armR.rotation.x = -.45*seizaK;    // 手は膝の上
+      rig.position.y -= .38*seizaK;
+    }
+
+    // 近くにある「しらべられる物」を探す
+    let best = null, bd = 1.7;
+    if(mode === 'room' && !yamaBusy()){                  // 山姥に追われている間は、しらべたり話したりできない
+      const inside = inRoom(p.x, p.z);
+      for(const g of hots){
+        if(!!HINTS[g.userData.key] !== inside) continue;   // 家の中のてがかりは中から、外の謎は外からだけ
+        const c = g.userData.center, dd = Math.hypot(p.x - c.x, p.z - c.z) - g.userData.reach;
+        if(dd < bd){ bd = dd; best = g; }
+      }
+      if(!bear.asleep && !inside){                                   // クマは体が大きいぶん、少し遠くから話せる
+        const dd = Math.hypot(p.x - bearG.position.x, p.z - bearG.position.z) - .6;
+        if(dd < bd){ bd = dd; best = bearG; }
+      }
+    }
+    if(best !== candidate){ candidate = best; setHover(best); }
+  }
+
+  /* ================= 構造ビュー用のヘルパー ================= */
+  const helpers = [
+    new THREE.PointLightHelper(lampLight, .25, '#f0b35c'),
+    new THREE.PointLightHelper(stoveLight, .2, '#ff8a3a'),
+    new THREE.CameraHelper(moon.shadow.camera),
+    new THREE.AxesHelper(1.5)
+  ];
+  helpers.forEach(h => { h.visible = false; scene.add(h); });
+
+  /* ================= カメラ（球面座標で管理） ================= */
+  const HOME = {target:V3(0,1.3,0), r:11.5, th:.72, ph:1.06, fov:36};
+  // 窓辺の視点：外の一点を中心に、カメラが窓のすぐ内側（z≒-1.4）に来る値
+  const WINDOW_VIEW = {target:V3(1.9,1.0,-10), r:8.7, th:0, ph:1.43, fov:50};
+  const cam = {target:HOME.target.clone(), r:HOME.r, th:HOME.th, ph:HOME.ph, fov:HOME.fov};
+  const goal = {target:HOME.target.clone(), r:HOME.r, th:HOME.th, ph:HOME.ph, fov:HOME.fov};
+  let mode = 'room';
+  // キャラクターを追うカメラの角度と距離（ドラッグ・ホイール・ピンチで変わる）
+  const view = {th:.72, ph:1.0, r:7.5};
+  const PH_MIN = .22, PH_MAX = 1.5;                    // 上下の角度の範囲（0＝真上から、π/2＝真横から）
+  let userZoomed = false;
+  const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
+  function homeR(){ return camera.aspect < .8 ? 16.5 : camera.aspect < 1.2 ? 13.5 : 11.5; }
+
+  // 画質はドットのみ：縦240ドット前後で描いて、ぼかさず拡大する
+  const smooth = false;
+  function resize(){
+    const w = stage.clientWidth, h = stage.clientHeight;
+    const s = Math.max(1, h / 240);
+    if(smooth){ renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); renderer.setSize(w, h, false); }
+    else { renderer.setPixelRatio(1); renderer.setSize(Math.round(w / s), Math.round(h / s), false); }
+    snow.material.size = smooth ? 1.2*s : 2;           // 点の大きさは描く解像度に合わせる
+    dust.material.size = smooth ? s : 1.5;
+    burstBase.size = smooth ? 1.6*s : 3;
+    camera.aspect = w/h; camera.updateProjectionMatrix();
+    if(!userZoomed) view.r = camera.aspect < .8 ? 10 : 7.5;
+  }
+  new ResizeObserver(resize).observe(stage);
+
+  /* ================= 操作：ドラッグ・ホイール・ピンチ・クリック ================= */
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  const pointers = new Map();
+  let downAt = null, lastInput = 0, pinchD = 0, hover = null, focused = null;
+
+  function pick(cx, cy){
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((cx-r.left)/r.width)*2-1, -((cy-r.top)/r.height)*2+1);
+    ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObjects([room, bearG, props], true)[0];   // 一番手前に当たった物
+    let o = hit && hit.object;
+    while(o && !o.userData.key) o = o.parent;
+    return o || null;
+  }
+  /* ===== タップした場所がふわっと光る =====
+     1) タップ位置から光線を飛ばし、当たった面の座標を求める
+     2) その面から少し浮かせた位置に、ぼかした光の板（Sprite）を置く
+     3) 同じ位置に小さな点光源を置き、周りの壁や床も一瞬照らす
+     4) 光の粒が数個ふわりと立ちのぼる
+     光源は毎回作ると処理が重くなるので、3つを使い回す */
+  function glowTexture(){
+    // 16px四方の小さな光を、ぼかさず拡大して「ドットの光」にする
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(8,8,0,8,8,8);
+    gr.addColorStop(0, 'rgba(255,244,220,1)');
+    gr.addColorStop(.3, 'rgba(255,210,140,.65)');
+    gr.addColorStop(1, 'rgba(255,180,90,0)');
+    g.fillStyle = gr; g.fillRect(0,0,16,16);
+    const t = new THREE.CanvasTexture(c); PIXEL_TEX.push(t);
+    t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false;
+    return t;
+  }
+  const glowTex = glowTexture();
+  const glowMat = () => new THREE.SpriteMaterial({map:glowTex, color:'#ffe0b0', transparent:true, opacity:0,
+    depthWrite:false, blending:THREE.AdditiveBlending});
+  // 月：ぼかした光の板と円盤を重ねる（光源 moon と同じ右奥の方向）
+  const moonHalo = new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex, color:'#bcd0ff', fog:false, depthWrite:false, transparent:true, opacity:.55}));
+  moonHalo.position.set(9,13,-43); moonHalo.scale.setScalar(10); scene.add(moonHalo);
+  const moonDisc = new THREE.Mesh(new THREE.CircleGeometry(1.1, 32), new THREE.MeshBasicMaterial({color:'#eef2ff', fog:false}));
+  moonDisc.position.set(9,13,-42.9); scene.add(moonDisc);
+
+  // 煙突の煙：7つの光の板を順番に立ちのぼらせ、ふくらませながら消す
+  const smoke = Array.from({length:7}, (_, i) => {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex, color:'#cfd6ea', transparent:true, opacity:0, depthWrite:false}));
+    s.userData.k = i / 7; scene.add(s); return s;
+  });
+  function updateSmoke(dt){
+    smoke.forEach(s => {
+      const k = s.userData.k = (s.userData.k + dt/6) % 1;
+      s.position.set(3.35 + k*1.6, 7.0 + k*3, -2.45 + k*.3);
+      s.scale.setScalar(.5 + k*1.8);
+      s.material.opacity = reduce ? 0 : Math.sin(k*Math.PI) * .45;
+    });
+  }
+  // タップの当たり先：屋根が見えている時は家の外側にも当たるようにする
+  const tapTargets = () => roofG.visible ? [room, outside, props, shell, roofG] : [room, outside, props];
+
+  const tapLights = [0,1,2].map(() => { const l = new THREE.PointLight('#ffc77a', 0, 3.2, 2); scene.add(l); return l; });
+  let tapLightIdx = 0;
+  const taps = [];
+
+  function spawnTap(cx, cy){
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((cx-r.left)/r.width)*2-1, -((cy-r.top)/r.height)*2+1);
+    ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObjects(tapTargets(), true)[0];
+    const pos = hit ? hit.point.clone() : ray.ray.at(6, new THREE.Vector3());
+    if(hit && hit.face){
+      const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+      pos.addScaledVector(n, .06);                      // 面にめり込まないよう少し手前へ
+    }
+    glowAt(pos);
+  }
+  function glowAt(pos){                                 // 指定した場所をぼんやり光らせる（部屋でも雪原でも同じ）
+    const sprite = new THREE.Sprite(glowMat());
+    sprite.position.copy(pos); scene.add(sprite);
+    const motes = [];
+    if(!reduce){
+      for(let i=0;i<7;i++){
+        const m = new THREE.Sprite(glowMat());
+        m.position.copy(pos);
+        m.scale.setScalar(.05 + Math.random()*.05);
+        m.userData.v = new THREE.Vector3((Math.random()-.5)*.3, .2 + Math.random()*.35, (Math.random()-.5)*.3);
+        scene.add(m); motes.push(m);
+      }
+    }
+    const light = tapLights[tapLightIdx++ % tapLights.length];
+    light.position.copy(pos);
+    const tap = {sprite, motes, light, age:0, life:1.7};
+    light.userData.owner = tap;
+    taps.push(tap);
+  }
+
+  function updateTaps(dt){
+    for(let i = taps.length-1; i >= 0; i--){
+      const tp = taps[i]; tp.age += dt;
+      const k = Math.min(1, tp.age / tp.life);
+      // すっと点いて（最初の12%）、ゆっくり消える
+      const a = k < .12 ? k/.12 : Math.pow(1 - (k-.12)/.88, 2);
+      tp.sprite.material.opacity = a * .95;
+      tp.sprite.scale.setScalar(reduce ? .6 : .2 + .7*(1 - Math.pow(1-k, 3)));
+      if(tp.light.userData.owner === tp) tp.light.intensity = a * 1.8;
+      tp.motes.forEach(m => { m.position.addScaledVector(m.userData.v, dt); m.material.opacity = a * .85; });
+      if(k >= 1){
+        scene.remove(tp.sprite); tp.sprite.material.dispose();
+        tp.motes.forEach(m => { scene.remove(m); m.material.dispose(); });
+        if(tp.light.userData.owner === tp) tp.light.intensity = 0;
+        taps.splice(i, 1);
+      }
+    }
+  }
+
+  /* ===== 雪煙（山姥の足音・灯籠の風・井戸の湯気などで使う） =====
+     粒ごとに速度を持たせ、毎フレーム「重力・空気抵抗・風」を足して動かす。
+     落下速度に上限を設けると、雪らしくふわふわ落ちる */
+  const bursts = [];
+  const burstBase = new THREE.PointsMaterial({color:'#ffffff', size:3, sizeAttenuation:false, transparent:true, opacity:1, depthWrite:false});
+  function snowBurst(p, small=false){
+    const n = small ? 6 : reduce ? 30 : 110, pw = small ? .35 : 1;
+    const pos = new Float32Array(n*3), vel = new Float32Array(n*3);
+    for(let i=0;i<n;i++){
+      const a = Math.random()*Math.PI*2, s = .3 + Math.random()*1.5;
+      pos[i*3] = p.x + (Math.random()-.5)*.25; pos[i*3+1] = p.y + .03; pos[i*3+2] = p.z + (Math.random()-.5)*.25;
+      vel[i*3] = Math.cos(a)*s*pw; vel[i*3+1] = (1.4 + Math.random()*2.8)*pw; vel[i*3+2] = Math.sin(a)*s*pw;
+    }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    const pts = new THREE.Points(geo, burstBase.clone()); scene.add(pts);
+    const puff = new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex, color:'#dfe8ff', transparent:true, opacity:0, depthWrite:false}));
+    puff.position.set(p.x, p.y + .3, p.z); scene.add(puff);
+    bursts.push({pts, vel, landed:new Uint8Array(n), puff, pa: small ? 0 : 1, age:0, life: small ? 1.4 : 3, groundY:p.y});
+    if(!small) Sound.poof();
+  }
+  function updateBursts(dt){
+    for(let i = bursts.length-1; i >= 0; i--){
+      const b = bursts[i]; b.age += dt;
+      const k = Math.min(1, b.age / b.life), P = b.pts.geometry.attributes.position, v = b.vel;
+      for(let j=0;j<P.count;j++){
+        if(b.landed[j]) continue;
+        v[j*3+1] = Math.max(v[j*3+1] - 3.4*dt, -.55);           // 重力（落下速度に上限）
+        v[j*3] *= 1 - 1.3*dt; v[j*3+2] *= 1 - 1.3*dt;           // 空気抵抗
+        let y = P.getY(j) + v[j*3+1]*dt;
+        if(y < b.groundY){ y = b.groundY; b.landed[j] = 1; }
+        P.setXYZ(j, P.getX(j) + (v[j*3] + .18)*dt, y, P.getZ(j) + v[j*3+2]*dt);  // +.18 は横風
+      }
+      P.needsUpdate = true;
+      b.pts.material.opacity = k < .7 ? 1 : 1 - (k-.7)/.3;
+      b.puff.material.opacity = (k < .08 ? k/.08 : Math.pow(1-k, 2)) * .45 * b.pa;
+      b.puff.scale.setScalar(.5 + 2*(1 - Math.pow(1-k, 3)));
+      if(k >= 1){
+        scene.remove(b.pts); b.pts.geometry.dispose(); b.pts.material.dispose();
+        scene.remove(b.puff); b.puff.material.dispose();
+        bursts.splice(i, 1);
+      }
+    }
+  }
+  function castAt(cx, cy){
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((cx-r.left)/r.width)*2-1, -((cy-r.top)/r.height)*2+1);
+    ray.setFromCamera(ndc, camera);
+    return ray.intersectObjects(tapTargets(), true)[0] || null;
+  }
+  const isOutside = o => { while(o){ if(o === outside) return true; o = o.parent; } return false; };
+  function groundAt(x, z){ return new THREE.Vector3(x, fieldH(x, z) - .06, z); }
+
+  function setHover(g){
+    if(hover === g) return;
+    if(hover) glow(hover, false);
+    hover = g; if(g) glow(g, true);
+    canvas.style.cursor = g ? 'pointer' : '';
+  }
+  function glow(g, on){
+    g.traverse(m => {
+      if(!m.isMesh || !m.material.emissive) return;
+      const M = m.material;
+      if(!M.userData.e0) M.userData.e0 = {c:M.emissive.clone(), i:M.emissiveIntensity};
+      if(on){ M.emissive.set('#6b4516'); M.emissiveIntensity = Math.max(.5, M.userData.e0.i); }
+      else { M.emissive.copy(M.userData.e0.c); M.emissiveIntensity = M.userData.e0.i; }
+    });
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    downAt = {x:e.clientX, y:e.clientY, moved:false};
+    if(pointers.size === 2){ const [a,b] = [...pointers.values()]; pinchD = Math.hypot(a.x-b.x, a.y-b.y); }
+    lastInput = performance.now();
+  });
+  canvas.addEventListener('pointermove', e => {
+    const p = pointers.get(e.pointerId);
+    if(!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    if(downAt && Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y) > 6){ downAt.moved = true; canvas.classList.add('dragging'); }
+    if(pointers.size === 1 && downAt && downAt.moved){
+      if(mode === 'window'){                              // 窓辺では少しだけ見回せる
+        goal.th = clamp(goal.th - dx*.0012, -.14, .14);
+        goal.ph = clamp(goal.ph - dy*.001, 1.34, 1.5);
+      } else {                                            // 水平方向は制限なし（360度）
+        view.th -= dx*.005;
+        view.ph = clamp(view.ph - dy*.006, PH_MIN, PH_MAX);    // 上下：真上近くから、地面すれすれの見上げる角度まで
+      }
+    } else if(pointers.size === 2 && mode === 'room'){
+      const [a,b] = [...pointers.values()], d = Math.hypot(a.x-b.x, a.y-b.y);
+      view.r = clamp(view.r * (pinchD / d), 3.5, 14); pinchD = d; userZoomed = true;
+    }
+    lastInput = performance.now();
+  });
+  const up = e => {
+    pointers.delete(e.pointerId);
+    canvas.classList.remove('dragging');
+    if(e.type === 'pointerup' && downAt && !downAt.moved && pointers.size === 0){
+      // ドラッグではなくタップの時だけ反応。部屋でも雪原でも、タップした場所がぼんやり光る
+      spawnTap(e.clientX, e.clientY);
+      const g = pick(e.clientX, e.clientY);
+      if(g && g === candidate) touch(g);               // 近くにいる時だけ、タップでもしらべられる
+    }
+    if(pointers.size === 0) downAt = null;
+  };
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault(); if(mode === 'window') return;
+    view.r = clamp(view.r * (1 + e.deltaY*.001), 3.5, 14); userZoomed = true; lastInput = performance.now();
+  }, {passive:false});
+
+  /* キーボード：見えないボタンにフォーカスすると物が光る */
+  const nav = document.getElementById('kbdNav');
+  hots.forEach(g => {
+    const b = document.createElement('button');
+    b.className = 'kbd'; b.textContent = g.userData.name + 'をしらべる';
+    b.addEventListener('focus', () => setHover(g));
+    b.addEventListener('blur', () => setHover(null));
+    b.addEventListener('click', () => touch(g));
+    nav.appendChild(b);
+  });
+  const kbdSnow = document.createElement('button');
+  kbdSnow.className = 'kbd'; kbdSnow.textContent = '雪原をぼんやり光らせる'; kbdSnow.hidden = true;
+  kbdSnow.addEventListener('click', () => { const g = groundAt(1.9 + (Math.random()*4-2), -6 - Math.random()*6); g.y += .06; glowAt(g); });
+  nav.appendChild(kbdSnow);
+
+  /* ===== キャラクターの操作入力 ===== */
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const joyEl = document.getElementById('joy'), knob = document.getElementById('knob'), actBtn = document.getElementById('actBtn');
+  let joyOn = false, joyId = null;
+  const moveHint = () => coarse ? 'スティックで移動 ／ 画面をなぞって見回す ／ 近づいて しらべる'
+                                : 'WASD・矢印で移動（Shiftで走る） ／ Q・E・Z・Xかドラッグで見回す ／ Spaceで しらべる';
+  if(!coarse) actBtn.textContent = 'しらべる [Space]';
+
+  addEventListener('keydown', e => {
+    if(!started) return;
+    const k = e.key.toLowerCase();
+    if(['w','a','s','d','q','e','z','x','arrowup','arrowdown','arrowleft','arrowright','shift'].includes(k)){
+      keys.add(k); if(k.startsWith('arrow')) e.preventDefault();
+    }
+    const onButton = e.target.closest && e.target.closest('button');
+    if(!onButton && (k === ' ' || k === 'enter')){ e.preventDefault(); act(); }
+    if(k === 'f') drink();
+  });
+  addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+  addEventListener('blur', () => keys.clear());
+
+  // バーチャルスティック：中心からのずれを -1〜1 の値にする
+  function moveJoy(e){
+    const r = joyEl.getBoundingClientRect(), R = r.width/2, m = R*.6;
+    let dx = e.clientX - (r.left + R), dy = e.clientY - (r.top + R);
+    const d = Math.hypot(dx, dy); if(d > m){ dx *= m/d; dy *= m/d; }
+    joy.x = dx/m; joy.y = dy/m;
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+  joyEl.addEventListener('pointerdown', e => { joyId = e.pointerId; joyEl.setPointerCapture(e.pointerId); moveJoy(e); });
+  joyEl.addEventListener('pointermove', e => { if(e.pointerId === joyId) moveJoy(e); });
+  const endJoy = e => { if(e.pointerId !== joyId) return; joyId = null; joy.x = joy.y = 0; knob.style.transform = ''; };
+  joyEl.addEventListener('pointerup', endJoy);
+  joyEl.addEventListener('pointercancel', endJoy);
+  canvas.addEventListener('pointerdown', e => { if(e.pointerType === 'touch') joyOn = true; });
+
+  // 「しらべる」：文字送り中なら全文表示、読み終えていれば閉じる、近くに物があればしらべる
+  function act(){
+    if(!dialEl.hidden) return;
+    if(card.classList.contains('show')){
+      if(!card.classList.contains('done')){ clearInterval(typeTimer); cardText.textContent = fullText; card.classList.add('done'); }
+      else document.getElementById('cardClose').click();
+      return;
+    }
+    if(mode === 'window'){ exitWindow(); return; }
+    if(candidate) touch(candidate);
+  }
+  actBtn.onclick = act;
+  const drinkBtn = document.getElementById('drinkBtn');
+  drinkBtn.onclick = drink;
+
+  /* ================= 物に触れる → 近づいて断片を表示 ================= */
+  const card = document.getElementById('card'), hint = document.getElementById('hint');
+  const invEl = document.getElementById('inv');
+  const stamEl = document.getElementById('stam'), stamBar = document.getElementById('stamBar');
+  function renderInv(){
+    const items = [inv.fire && `火種(${Math.ceil(fireT)})`, inv.kettle && 'やかん', inv.key && '鍵', inv.honey && 'はちみつ',
+      inv.shoes && 'かんじき', inv.candy > 0 && `飴×${inv.candy}`, inv.oshiruko > 0 && `おしるこ×${inv.oshiruko}`].filter(Boolean);
+    invEl.innerHTML = `もちもの <b>${items.length ? items.join('・') : 'なし'}</b>　灯 <b>${litCount}/4</b>`;
+  }
+  // 文字送り：1文字ずつ表示し、2文字ごとに「ピッ」。カードをタップすると全文表示
+  const cardText = document.getElementById('cardText'), liveText = document.getElementById('liveText');
+  let typeTimer = null, fullText = '';
+  // アイテムを手に入れた時：画面の中央に「〇〇を手に入れた！」を出す
+  const gotEl = document.getElementById('got');
+  let gotTimer = null, pendingItem = null;
+  function gotItem(name){
+    gotEl.textContent = `${name}を手に入れた！`;
+    gotEl.classList.add('show');
+    Sound.chime(0); setTimeout(() => Sound.chime(2), 120); setTimeout(() => Sound.chime(4), 240);
+    clearTimeout(gotTimer); gotTimer = setTimeout(() => gotEl.classList.remove('show'), 2600);
+  }
+  function show(no, obj, text){
+    const m = text.match(/【(.+?)を手に入れた】/);         // 文中の【〇〇を手に入れた】は、専用の表示に出す
+    if(m){ text = text.replace(m[0], '').trim(); pendingItem = m[1]; }   // 文章を閉じたあとに出す
+    document.getElementById('cardNo').textContent = no;
+    document.getElementById('cardNo').hidden = !no;   // 会話のときは番号の札を出さない
+    document.getElementById('cardObj').textContent = obj;
+    liveText.textContent = text;                      // 読み上げ用には全文を一度だけ
+    fullText = text; clearInterval(typeTimer);
+    card.classList.remove('done'); card.classList.add('show'); hint.classList.add('off');
+    if(reduce){ cardText.textContent = text; card.classList.add('done'); return; }
+    let i = 0; cardText.textContent = '';
+    typeTimer = setInterval(() => {
+      i++; cardText.textContent = text.slice(0, i);
+      if(i % 2 === 0) Sound.blip();
+      if(i >= text.length){ clearInterval(typeTimer); card.classList.add('done'); }
+    }, 45);
+  }
+  card.addEventListener('click', e => {
+    if(e.target.closest('button') || card.classList.contains('done')) return;
+    clearInterval(typeTimer); cardText.textContent = fullText; card.classList.add('done');
+  });
+
+  // 時計：見ている人の端末の時刻を、昔のゲーム機風に表示
+  const clockAp = document.getElementById('clockAp'), clockT = document.getElementById('clockT');
+  function tick(){
+    const d = new Date(), h = d.getHours();
+    clockAp.textContent = h < 12 ? 'AM' : 'PM';
+    clockT.innerHTML = `${String((h % 12) || 12).padStart(2,'0')}<span class="colon">:</span>${String(d.getMinutes()).padStart(2,'0')}`;
+  }
+  tick(); setInterval(tick, 10000);
+  function flyTo(t){
+    goal.target.copy(t.target); goal.r = t.r;
+    if(reduce){ cam.target.copy(goal.target); cam.r = goal.r; }
+  }
+  const backBtn = document.getElementById('backBtn');
+  function setGoal(v){
+    goal.target.copy(v.target); goal.r = v.r; goal.th = v.th; goal.ph = v.ph; goal.fov = v.fov;
+    if(reduce) Object.assign(cam, {r:v.r, th:v.th, ph:v.ph, fov:v.fov}), cam.target.copy(v.target);
+  }
+  function enterWindow(){
+    mode = 'window'; focused = null; setHover(null);
+    setGoal(WINDOW_VIEW);
+    backBtn.hidden = false; kbdSnow.hidden = false;
+    hint.textContent = '雪原をタップ ／ ドラッグで少し見回す';
+    setTimeout(() => { if(mode === 'window' && !card.classList.contains('show')) hint.classList.remove('off'); }, 1200);
+  }
+  function exitWindow(){
+    mode = 'room'; focused = null;                       // 以降はカメラがまたキャラクターを追う
+    backBtn.hidden = true; kbdSnow.hidden = true;
+    card.classList.remove('show');
+    hint.textContent = moveHint();
+  }
+  backBtn.onclick = exitWindow;
+  document.addEventListener('keydown', e => {
+    if(e.key !== 'Escape') return;
+    if(!dialEl.hidden) closeDial();
+    else if(mode === 'window') exitWindow();
+  });
+
+  /* ===== 物置のダイヤル錠：▲▼で3けたをそろえる ===== */
+  const dialEl = document.getElementById('dial'), digitsEl = document.getElementById('digits');
+  const dialVals = [0, 0, 0];
+  dialVals.forEach((_, i) => {
+    const col = document.createElement('div'), num = document.createElement('span');
+    const upB = document.createElement('button'), dnB = document.createElement('button');
+    upB.className = dnB.className = 'chip'; upB.textContent = '▲'; dnB.textContent = '▼';
+    upB.setAttribute('aria-label', `${i+1}けた目を増やす`); dnB.setAttribute('aria-label', `${i+1}けた目を減らす`);
+    num.textContent = '0';
+    const set = d => { dialVals[i] = (dialVals[i] + d + 10) % 10; num.textContent = dialVals[i]; Sound.blip(); };
+    upB.onclick = () => set(1); dnB.onclick = () => set(-1);
+    col.append(upB, num, dnB); digitsEl.append(col);
+  });
+  function openDial(){ dialEl.hidden = false; focused = null; dialEl.querySelector('button').focus(); }
+  function closeDial(){ dialEl.hidden = true; }
+  document.getElementById('dialCancel').onclick = closeDial;
+  document.getElementById('dialOk').onclick = () => {
+    closeDial();
+    if(dialVals.join('') === SHED_CODE){
+      shedOpen = true; inv.honey = true; shedLock.visible = false; shedG.userData.spark.visible = false;
+      Sound.door(); Sound.chime(2); renderInv();
+      show('', '物置', '「カチッ」。錠が外れた。物置の奥に、はちみつの壺がみっつあった。ひとつは中身がマヨネーズだった。はちみつをひとつもらっていこう。【はちみつを手に入れた】');
+    } else {
+      shedWrong++; Sound.thud(.4);
+      show('', '物置', shedWrong >= 3 ? 'ガチャ。開かない。……物置の中から「ちがいます」と声がした。' : 'ガチャ。開かない。番号がちがうようだ。');
+    }
+  };
+
+  function touch(g){
+    if(yamaBusy()) return;
+    const key = g.userData.key;
+    if(key === 'bear'){ talk(); return; }
+    const c = g.userData.center;                         // 旅人が物のほうを向き、カメラが少し寄る
+    facing = Math.atan2(c.x - player.position.x, c.z - player.position.z);
+    focused = g;
+    if(HINTS[key]){                                      // 小屋の中のてがかり
+      const text = HINTS[key].text();
+      if(!order.includes(key)){
+        order.push(key);
+        g.userData.spark.visible = false;
+        stage.style.setProperty('--found', order.length);
+        Sound.chime(order.length - 1);
+      }
+      if(key === 'window') enterWindow();                // 窓は外を眺める視点へ
+      else if(mode === 'window') exitWindow();
+      renderInv();
+      show(`てがかり ${order.indexOf(key) + 1}/${HINT_COUNT}`, HINTS[key].name, text);
+      return;
+    }
+    const text = SPOTS[key]();                           // 小屋の外の謎
+    if(text == null){ focused = null; return; }          // 物置はダイヤル錠の画面へ
+    renderInv();
+    show('', g.userData.name, text);
+  }
+  document.getElementById('cardClose').onclick = () => {
+    card.classList.remove('show');
+    if(mode === 'window') hint.classList.remove('off');   // 窓辺ではそのまま外を眺め続ける
+    else { focused = null; }
+    if(bear.state === 'talk'){ bear.state = 'idle'; bear.timer = 3; }
+    if(pendingItem){ gotItem(pendingItem); pendingItem = null; }   // 読み終えて閉じたら「〇〇を手に入れた！」
+  };
+
+  /* ================= 脱出 ================= */
+  const endingEl = document.getElementById('ending');
+  function escapeMountain(){
+    escaped = true; started = false; keys.clear();
+    stage.classList.remove('danger'); alertEl.hidden = true;
+    yamaG.visible = false; yamaLight.intensity = 0;
+    Sound.chime(0); setTimeout(() => Sound.chime(2), 250); setTimeout(() => Sound.chime(4), 500);
+    const m = Math.floor(playT / 60), s = Math.floor(playT % 60);
+    document.getElementById('endStats').textContent =
+      `かかった時間 ${m}分${String(s).padStart(2,'0')}秒 ／ 山姥から逃げきった回数 ${yamaEscapes} ／ つかまった回数 ${yamaCaught} ／ もらった飴 ${yamaCaught}個`;
+    setTimeout(() => { endingEl.hidden = false; document.getElementById('againBtn').focus(); }, 1200);
+  }
+  document.getElementById('againBtn').onclick = () => location.reload();
+
+  /* ================= 入口・トグル ================= */
+  const gate = document.getElementById('gate');
+  function setSound(on){ Sound.set(on); }
+  function enter(withSound){
+    setSound(withSound); gate.classList.add('gone');
+    started = true; if(coarse) joyOn = true;
+    renderInv();
+    showAlert('まずは小屋の中をしらべてみよう', false, 6000);
+    hint.textContent = moveHint();
+    setTimeout(() => hint.classList.remove('off'), 1400);
+    setTimeout(() => hint.classList.add('off'), 9000);
+    // 入室演出：遠くから寄る
+    if(!reduce){ cam.r = view.r * 2; cam.ph = .8; }
+  }
+  document.getElementById('enterSound').onclick = () => enter(true);
+
+  function applyGfx(){
+    stage.classList.add('retro');
+    resize();
+  }
+
+
+  /* ================= 毎フレームの処理 ================= */
+  const clock = new THREE.Clock();
+  let lastDoorWant = 0;
+  function frame(){
+    const dt = Math.min(clock.getDelta(), .05), t = clock.elapsedTime;
+    const p = order.length / HINT_COUNT;
+    if(started) playT += dt;
+
+    // 灯籠の火：ともすとふわっと明るくなり、ゆらぐ
+    lanterns.forEach((l, i) => {
+      l.a += ((l.lit ? 1 : 0) - l.a) * Math.min(1, dt*4);
+      const fl = reduce ? 1 : .85 + Math.sin(t*9 + i*2)*.08 + Math.sin(t*23 + i)*.05;
+      l.glowS.material.opacity = l.a * .9 * fl;
+      l.fm.emissive.setRGB(l.a*.95*fl, l.a*.55*fl, l.a*.18);
+    });
+    // 門の氷がとけ、門が開く
+    if(!sealed && ice.visible){
+      iceK = Math.min(1, iceK + dt/2.2);
+      ice.scale.y = Math.max(.001, 1 - iceK); ice.position.y = 2.35 * ice.scale.y;
+      iceM.opacity = .6 * (1 - iceK);
+      if(iceK >= 1) ice.visible = false;
+    }
+    if(gateOpen && gateK < 1){
+      gateK = Math.min(1, gateK + dt/2.5);
+      const e = 1 - Math.pow(1 - gateK, 3);
+      leafL.rotation.y = e*1.5; leafR.rotation.y = -e*1.5;      // 2枚とも崖の奥へ開く
+    }
+    if(gateOpen && !escaped && player.position.z < GATE_Z - 1.6) escapeMountain();
+
+    // 灯り：見つけるほど明るく、ゆっくり呼吸する
+    const breathe = reduce ? 0 : Math.sin(t*1.1)*.05;
+    lampLight.intensity = (.8 + p*1.0) * (1 + breathe);
+    hemi.intensity = .55 + p*.2;
+    stoveLight.intensity = .6 + (reduce ? 0 : (Math.sin(t*7)*.08 + Math.sin(t*13.3)*.05));
+
+    // 光る点の明滅
+    hots.forEach((g,i) => { const s = g.userData.spark; if(s.visible) s.material.opacity = .35 + .55*(.5+.5*Math.sin(t*2 + i)); });
+
+    // 雪
+    const sp = snow.geometry.attributes.position, sb = snow.userData.box3, ss = snow.userData.seed;
+    for(let i=0;i<sp.count;i++){
+      let y = sp.getY(i) - dt*(.45 + (ss[i]%1)*.5) * (reduce ? .3 : 1);
+      if(y < sb[2]) y = sb[3];
+      sp.setY(i, y);
+      sp.setX(i, sp.getX(i) + Math.sin(t*.7 + ss[i])*dt*.12);
+    }
+    sp.needsUpdate = true;
+
+    // ほこり
+    if(!reduce){
+      const dp = dust.geometry.attributes.position, db = dust.userData.box3, ds = dust.userData.seed;
+      for(let i=0;i<dp.count;i++){
+        let y = dp.getY(i) + dt*.05;
+        if(y > db[3]) y = db[2];
+        dp.setY(i, y);
+        dp.setX(i, dp.getX(i) + Math.sin(t*.4 + ds[i])*dt*.03);
+      }
+      dp.needsUpdate = true;
+    }
+    dust.material.opacity = .35 + p*.55;
+
+    // キャラクターを動かし、カメラはその少し上を目標に追いかける
+    updatePlayer(dt); updateBear(dt, t); updateYama(dt, t); updatePrints(dt);
+    if(mode === 'room'){
+      const f = focused === bearG ? bearG.position : player.position;   // 会話中はクマと旅人の間あたりを見る
+      goal.target.set((player.position.x + f.x)/2, player.position.y + 1.0, (player.position.z + f.z)/2);
+      goal.th = view.th; goal.ph = view.ph; goal.r = view.r * (focused ? .7 : 1) * (yamaG.visible ? 1.35 : 1); goal.fov = HOME.fov;   // 追われている間は引いて山姥も映す
+    }
+    // 家の見せ方：中にいる時は屋根を外して手前と右の壁を半透明に。
+    // 裏に回った時は家全体を半透明にして旅人を見せる。手前や右の外にいる時は普通の一軒家
+    const pp = player.position;
+    const inside = inRoom(pp.x, pp.z);
+    // Q・Eキーで視点を回す
+    if(started && mode === 'room'){
+      if(keys.has('q')) view.th += dt*2.2;
+      if(keys.has('e')) view.th -= dt*2.2;
+      if(keys.has('z')) view.ph = clamp(view.ph + dt*1.4, PH_MIN, PH_MAX);   // Z：低い位置から見上げる
+      if(keys.has('x')) view.ph = clamp(view.ph - dt*1.4, PH_MIN, PH_MAX);   // X：高い位置から見下ろす
+    }
+    // 360度見回せるので、カメラから旅人への線が家を横切る時だけ家を透かす（真上から見た2Dで判定）
+    const cx = camera.position.x, cz = camera.position.z;
+    const occl = !inside && segHitsRect(cx, cz, pp.x, pp.z, -4.4, -3.4, 4.4, 3.4);
+    const camBackSide = cz < -3.05 || cx < -4.05;                  // 家の中にいて、カメラが奥か左の壁の外にある
+    const ease = Math.min(1, dt*6);
+    const shellA = (inside || occl) ? .15 : 1;
+    [shellM, doorM, doorFrameM].forEach(m => { m.opacity += (shellA - m.opacity) * ease; });
+    wallM.opacity += (((occl || (inside && camBackSide)) ? .28 : 1) - wallM.opacity) * ease;
+    roofG.visible = !(inside || occl);
+    const yA = ((inside && yamaG.visible) ? .3 : 1) * yama.fadeMul;          // 帰っていく時は、だんだん消える
+    yamaMats.forEach(m => { m.opacity += (yA - m.opacity) * ease; m.depthWrite = m.opacity > .95; });
+    // 扉：近づくと外へ開き、離れると閉まる
+    // 火種：外にいる間だけ燃えて減る
+    if(started && inv.fire && !inside){
+      const before = Math.ceil(fireT); fireT -= dt;
+      if(fireT <= 0){ inv.fire = false; fireT = 0; renderInv(); showAlert('火種が消えてしまった。ランプでもう一度もらおう。', false, 4000); }
+      else if(Math.ceil(fireT) !== before) renderInv();
+    }
+    // 体力ゲージ・おしるこの効果・自販機の準備中
+    if(boostT > 0) boostT -= dt;
+    if(vendCool > 0) vendCool -= dt;
+    stamBar.style.transform = `scaleX(${(stamina/100).toFixed(3)})`;
+    stamEl.classList.toggle('tired', tired);
+    stamEl.classList.toggle('boost', boostT > 0);
+    // 物置の扉
+    shedDoor.rotation.y += ((shedOpen ? -1.4 : 0) - shedDoor.rotation.y) * Math.min(1, dt*4);
+    // 雪だるま：しらべた後、旅人が離れたすきに別の場所へ移る
+    if(smMove && Math.hypot(pp.x - SM.position.x, pp.z - SM.position.z) > 9){
+      let x, z, tries = 0;
+      do { const a = Math.random()*Math.PI*2, r = 7 + Math.random()*12; x = Math.sin(a)*r; z = Math.cos(a)*r - 4; tries++; }
+      while(tries < 30 && (z < GATE_Z + 8 || Math.hypot(x - pp.x, z - pp.z) < 9 || (Math.abs(x) < 6 && Math.abs(z) < 5)));
+      placeSnowman(x, z); smMove = false;
+    }
+    const doorWant = Math.hypot(pp.x - dMid, pp.z - DOOR.z) < 2.2 ? -1.45 : 0;
+    if(doorWant !== lastDoorWant){ lastDoorWant = doorWant; Sound.door(); }
+    doorPivot.rotation.y += (doorWant - doorPivot.rotation.y) * Math.min(1, dt*5);
+    updateSmoke(dt);
+    // スティックと「しらべる」ボタンの表示
+    const uiBusy = !started || mode !== 'room' || card.classList.contains('show') || !dialEl.hidden;
+    joyEl.hidden = !(joyOn && !uiBusy);
+    actBtn.hidden = !(candidate && !uiBusy);
+    drinkBtn.hidden = !(inv.oshiruko > 0 && started && !card.classList.contains('show') && dialEl.hidden);
+    const dl = `おしるこをのむ（${inv.oshiruko}）` + (coarse ? '' : ' [F]');
+    if(drinkBtn.textContent !== dl) drinkBtn.textContent = dl;
+    const label = (candidate === bearG ? 'はなす' : 'しらべる') + (coarse ? '' : ' [Space]');
+    if(actBtn.textContent !== label) actBtn.textContent = label;
+    const k = 1 - Math.pow(.02, dt);
+    cam.th += (goal.th - cam.th)*k; cam.ph += (goal.ph - cam.ph)*k; cam.r += (goal.r - cam.r)*k;
+    cam.target.lerp(goal.target, k);
+    cam.fov += (goal.fov - cam.fov)*k;
+    if(Math.abs(camera.fov - cam.fov) > .001){ camera.fov = cam.fov; camera.updateProjectionMatrix(); }
+    camera.position.set(
+      cam.target.x + cam.r*Math.sin(cam.ph)*Math.sin(cam.th),
+      cam.target.y + cam.r*Math.cos(cam.ph),
+      cam.target.z + cam.r*Math.sin(cam.ph)*Math.cos(cam.th)
+    );
+    // 低い角度でも、カメラが雪の起伏にめり込まないよう地面より少し上に保つ
+    const camFloor = groundY(camera.position.x, camera.position.z) + .6;
+    if(camera.position.y < camFloor) camera.position.y = camFloor;
+    camera.lookAt(cam.target);
+    // 山姥の声：追われていない時は消し、出ている間は山姥の頭の上（画面の外なら画面のふち）に置く
+    if(yama.state !== 'chase' && !voiceEl.hidden) voiceEl.hidden = true;
+    if(!voiceEl.hidden){
+      camera.updateMatrixWorld();
+      yHead.getWorldPosition(voicePos); voicePos.y += 1.6; voicePos.project(camera);
+      const W = stage.clientWidth, H = stage.clientHeight;
+      const vx = voicePos.z > 1 ? W/2 : (voicePos.x*.5 + .5) * W, vy = voicePos.z > 1 ? H*.4 : (-voicePos.y*.5 + .5) * H;
+      voiceEl.style.left = clamp(vx, 120, W - 120) + 'px';
+      voiceEl.style.top = clamp(vy, 170, H - 60) + 'px';
+    }
+    if(shake > .001 && !reduce){                                     // 山姥の足音で画面が揺れる
+      camera.position.x += (Math.random()-.5)*shake; camera.position.y += (Math.random()-.5)*shake;
+    }
+    shake *= Math.pow(.02, dt);
+
+    updateTaps(dt); updateBursts(dt);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  applyGfx();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
